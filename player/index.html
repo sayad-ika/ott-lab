@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>OTT Live Stream Player</title>
+    <style>
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+      body { background: #0a0a0a; }
+      button:hover { background: rgba(255,255,255,0.1) !important; }
+
+      /* Seek slider - WebKit */
+      input[type="range"].seek-slider { -webkit-appearance: none; height: 4px; border-radius: 2px; cursor: pointer; }
+      input[type="range"].seek-slider::-webkit-slider-runnable-track { height: 4px; border-radius: 2px; }
+      input[type="range"].seek-slider::-webkit-slider-thumb {
+        -webkit-appearance: none;
+        width: 14px;
+        height: 14px;
+        border-radius: 50%;
+        background: #e50914;
+        margin-top: -5px;
+        cursor: pointer;
+        opacity: 0;
+        transition: opacity 0.15s;
+      }
+      input[type="range"].seek-slider:hover::-webkit-slider-thumb { opacity: 1; }
+      input[type="range"].seek-slider:active::-webkit-slider-thumb { opacity: 1; width: 16px; height: 16px; margin-top: -6px; }
+
+      /* Seek slider - Firefox */
+      input[type="range"].seek-slider::-moz-range { height: 4px; border-radius: 2px; cursor: pointer; background: transparent; }
+      input[type="range"].seek-slider::-moz-range-track { height: 4px; border-radius: 2px; background: transparent; }
+      input[type="range"].seek-slider::-moz-range-thumb {
+        width: 14px;
+        height: 14px;
+        border-radius: 50%;
+        background: #e50914;
+        border: none;
+        cursor: pointer;
+        opacity: 0;
+        transition: opacity 0.15s;
+      }
+      input[type="range"].seek-slider:hover::-moz-range-thumb { opacity: 1; }
+      input[type="range"].seek-slider:active::-moz-range-thumb { opacity: 1; width: 16px; height: 16px; }
+
+      /* Volume slider - WebKit */
+      input[type="range"].vol-slider { -webkit-appearance: none; background: transparent; }
+      input[type="range"].vol-slider::-webkit-slider-runnable-track { height: 3px; background: rgba(255,255,255,0.2); border-radius: 2px; }
+      input[type="range"].vol-slider::-webkit-slider-thumb {
+        -webkit-appearance: none;
+        width: 12px;
+        height: 12px;
+        border-radius: 50%;
+        background: #e50914;
+        margin-top: -4.5px;
+        cursor: pointer;
+      }
+
+      /* Volume slider - Firefox */
+      input[type="range"].vol-slider::-moz-range { height: 3px; background: rgba(255,255,255,0.2); border-radius: 2px; border: none; }
+      input[type="range"].vol-slider::-moz-range-thumb { width: 12px; height: 12px; border-radius: 50%; background: #e50914; border: none; cursor: pointer; }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
