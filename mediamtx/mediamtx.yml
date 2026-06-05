@@ -1,0 +1,17 @@
+# MediaMTX Configuration for OTT Lab - Chapter 1
+# RTMP ingest server for live streaming pipeline
+
+# RTMP Settings
+rtmp: yes
+rtmpAddress: :1935
+
+# Path Configuration
+# OBS pushes to: rtmp://localhost:1935/live/stream
+# FFmpeg reads from: rtmp://localhost:1935/live/stream
+paths:
+  all_others:
+    source: publisher
+
+# Optional: Enable logging
+logLevel: info
+logFile: mediamtx.log
