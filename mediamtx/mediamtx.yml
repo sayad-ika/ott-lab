@@ -5,6 +5,9 @@
 rtmp: yes
 rtmpAddress: :1935
 
+# Disable RTSP (port 8554 conflicts with Hyper-V reserved range)
+rtsp: no
+
 # Path Configuration
 # OBS pushes to: rtmp://localhost:1935/live/stream
 # FFmpeg reads from: rtmp://localhost:1935/live/stream

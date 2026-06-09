@@ -10,6 +10,8 @@ Greenfield OTT (Over-The-Top) platform built incrementally through chapters. Eac
 
 ```
 ott-lab/
+├── start.cmd                  # One-command pipeline startup
+├── stop.cmd                   # One-command pipeline shutdown
 ├── project-scope.md           # Full project requirements and milestones
 ├── mediamtx/                  # RTMP ingest server config
 ├── ffmpeg/                    # Encoding + HLS packaging scripts
@@ -44,7 +46,21 @@ OBS Studio → MediaMTX (RTMP ingest) → FFmpeg (encode + HLS) → Nginx (HTTP 
 
 ## Commands (Chapter 1)
 
-### Start the Pipeline (in order)
+### Quick Start (single command)
+
+```powershell
+# Start all services (opens 4 separate windows, requests admin for firewall)
+.\start.cmd
+
+# Stop all services (removes firewall rule)
+.\stop.cmd
+```
+
+### LAN Access
+
+The player is accessible to any device on your local network. After running `start.cmd`, it prints your LAN URL (e.g. `http://192.168.1.x:8080`). Open that URL on any LAN device to watch the stream.
+
+### Start the Pipeline (manual, in order)
 
 ```bash
 # Terminal 1: RTMP Ingest Server
@@ -91,7 +107,7 @@ npm run build        # Build for production
 
 - FFmpeg outputs HLS segments to `stream/`
 - Nginx serves HLS files from that directory on port 8080
-- Player fetches manifest from `http://localhost:8080/live/stream.m3u8`
+- Player fetches manifest from `/live/stream.m3u8` (relative URL, works on localhost and LAN)
 - HLS.js handles playback in browsers without native HLS support
 - FFmpeg uses `temp_file` flag to work around Windows file locking
 - Nginx requires `mime.types` in the config directory (copied from `C:\tools\nginx-1.31.1\conf\`)

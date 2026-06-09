@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
 import Hls from 'hls.js'
 
-const HLS_URL = 'http://localhost:8080/live/stream.m3u8'
+const HLS_URL = '/live/stream.m3u8'
 
 export function Player() {
   const videoRef = useRef<HTMLVideoElement>(null)
