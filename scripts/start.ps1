@@ -35,19 +35,25 @@ foreach ($s in $streams) {
 Write-Host ""
 Read-Host "  Press ENTER once all streams are active..."
 
-# 2. FFmpeg -- one process per stream
-Write-Host "  [2/4] FFmpeg (RTMP -> HLS) - $($streams.Count) streams" -ForegroundColor Yellow
+# 2. FFmpeg -- one process per stream (HLS + recording)
+Write-Host "  [2/4] FFmpeg (RTMP -> HLS + MKV) - $($streams.Count) streams" -ForegroundColor Yellow
 $streamDir = "$root\stream"
+$recordingsDir = "$root\recordings"
 foreach ($s in $streams) {
     $outDir = "$streamDir\$($s.Name)"
     if (-not (Test-Path $outDir)) { New-Item -ItemType Directory -Path $outDir | Out-Null }
+
+    $recDir = "$recordingsDir\$($s.Name)"
+    if (-not (Test-Path $recDir)) { New-Item -ItemType Directory -Path $recDir | Out-Null }
+    $timestamp = Get-Date -Format 'yyyy-MM-dd_HH-mm-ss'
+    $recordingFile = "$recDir\$($s.Name)_$timestamp.mkv"
 
     $rtmpUrl = "rtmp://localhost:1935/live/$($s.Name)"
     $segmentPattern = "$outDir\segment_%03d.ts"
     $playlist = "$outDir\stream.m3u8"
 
     Write-Host "      Starting FFmpeg for '$($s.Name)' ($($s.Label))..." -ForegroundColor DarkGray
-    $ffmpegCmd = "ffmpeg -i $rtmpUrl -c:v libx264 -preset veryfast -tune zerolatency -b:v 3500k -maxrate 4000k -bufsize 6000k -c:a aac -b:a 128k -ar 44100 -f hls -hls_time 6 -hls_list_size 10 -hls_flags delete_segments+append_list -hls_segment_filename '$segmentPattern' '$playlist'"
+    $ffmpegCmd = "ffmpeg -i $rtmpUrl -c:v libx264 -preset veryfast -tune zerolatency -b:v 3500k -maxrate 4000k -bufsize 6000k -c:a aac -b:a 128k -ar 44100 -f hls -hls_time 6 -hls_list_size 10 -hls_flags delete_segments+append_list -hls_segment_filename '$segmentPattern' '$playlist' -f matroska '$recordingFile'"
     Start-Process powershell -ArgumentList "-NoExit", "-Command", $ffmpegCmd
 }
 

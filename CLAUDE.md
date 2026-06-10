@@ -19,6 +19,7 @@ ott-lab/
 ├── ffmpeg/                        # Encoding + HLS packaging scripts
 ├── nginx/                         # HTTP delivery + caching config
 ├── stream/                        # HLS output (segments + manifests)
+├── recordings/                    # Stream recordings (MKV, timestamped)
 ├── player/                        # React + Vite + HLS.js + WebRTC player app
 │   └── src/
 │       ├── App.tsx                # Routing: / (gallery), /stream/:stream, /monitor/:stream
@@ -41,9 +42,10 @@ Device B ──[RTMP:1935/live/camera1]──► MediaMTX ──┬──► FFm
                                                    └──► WebRTC       ──► /monitor/camera1 (WHEP)
 ```
 
-N input streams, each with two outputs:
+N input streams, each with three outputs:
 - **HLS path** (Chapter 1): ~18-30s latency, scalable to many viewers
 - **WebRTC path** (Chapter 2): ~0.3-1s latency, for OPS team (2-3 viewers on LAN)
+- **Recording path** (Chapter 3): full stream saved as MKV to `recordings/<name>/`
 
 Stream names are configured in `player/src/config/streams.ts` and `scripts/start.ps1`.
 
@@ -130,7 +132,7 @@ npm run build        # Build for production (output to dist/)
 
 - Stream names are defined in `player/src/config/streams.ts` (shared config for the player app)
 - `start.ps1` has a matching `$streams` array — keep both in sync when adding/removing streams
-- Each stream gets its own FFmpeg process and HLS output directory (`stream/<name>/`)
+- Each stream gets its own FFmpeg process, HLS output directory (`stream/<name>/`), and recording (`recordings/<name>/`)
 - MediaMTX auto-creates paths for any stream key pushed to `rtmp://<host>:1935/live/<key>`
 - Nginx `alias D:/ott-lab/stream/` serves `stream/<name>/stream.m3u8` at `/live/<name>/stream.m3u8`
 - Player and Monitor accept `:stream` URL param to dynamically build HLS/WHEP URLs
