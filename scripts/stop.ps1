@@ -16,6 +16,7 @@ Write-Host "  Removing firewall rules..." -ForegroundColor Yellow
 netsh advfirewall firewall delete rule name="OTT-Lab-HTTP" | Out-Null
 netsh advfirewall firewall delete rule name="OTT-Lab-WebRTC-Signal" | Out-Null
 netsh advfirewall firewall delete rule name="OTT-Lab-WebRTC-Media" | Out-Null
+netsh advfirewall firewall delete rule name="OTT-Lab-RTMP" | Out-Null
 
 Write-Host ""
 Write-Host "All services stopped." -ForegroundColor Green
