@@ -10,30 +10,43 @@ Greenfield OTT (Over-The-Top) platform built incrementally through chapters. Eac
 
 ```
 ott-lab/
-├── start.cmd                  # One-command pipeline startup
-├── stop.cmd                   # One-command pipeline shutdown
-├── project-scope.md           # Full project requirements and milestones
-├── mediamtx/                  # RTMP ingest server config
-├── ffmpeg/                    # Encoding + HLS packaging scripts
-├── nginx/                     # HTTP delivery + caching config
-├── stream/                    # HLS output (segments + manifests)
-├── player/                    # React + Vite + HLS.js player app
-└── .claude/plan/              # Implementation plans
-    └── chapter-1-implementation.md
+├── scripts/
+│   ├── start.cmd                  # One-command pipeline startup
+│   ├── start.ps1                  # Full pipeline launcher
+│   ├── stop.cmd                   # One-command pipeline shutdown
+│   └── stop.ps1                   # Full pipeline teardown
+├── mediamtx/                      # RTMP ingest + WebRTC server config
+├── ffmpeg/                        # Encoding + HLS packaging scripts
+├── nginx/                         # HTTP delivery + caching config
+├── stream/                        # HLS output (segments + manifests)
+├── player/                        # React + Vite + HLS.js + WebRTC player app
+│   └── src/
+│       ├── App.tsx                # Routing: / (HLS) and /monitor (WebRTC)
+│       └── components/
+│           ├── Player.tsx         # HLS player (Chapter 1)
+│           └── Monitor.tsx        # WebRTC low-latency monitor (Chapter 2)
+└── .claude/plan/                  # Implementation plans
 ```
 
-## Architecture (Chapter 1)
+## Architecture (Chapter 1 + 2)
 
 ```
-OBS Studio → MediaMTX (RTMP ingest) → FFmpeg (encode + HLS) → Nginx (HTTP delivery) → React Player (HLS.js)
+OBS Studio ──[RTMP:1935]──► MediaMTX ──┬──► FFmpeg (HLS) ──► Nginx:8080 ──► Player (/)
+                                        └──► WebRTC (WHEP:8889) ────────────► Monitor (/monitor)
 ```
+
+Two streams from a single RTMP ingest:
+- **HLS path** (Chapter 1): ~18-30s latency, scalable to many viewers
+- **WebRTC path** (Chapter 2): ~0.3-1s latency, for OPS team (2-3 viewers on LAN)
 
 ### Key Technologies
 
 - **RTMP Ingest:** MediaMTX on port 1935
+- **WebRTC Signaling:** MediaMTX WHEP on port 8889 (TCP)
+- **WebRTC Media:** MediaMTX ICE/DTLS on port 8189 (UDP)
 - **Encoder:** FFmpeg (H.264/AAC, 720p30, HLS 6s segments)
 - **HTTP Server:** Nginx on port 8080
-- **Player:** React + TypeScript + Vite + HLS.js on port 5173
+- **Player:** React + TypeScript + Vite on port 5173
 
 ## Tool Paths
 
@@ -44,26 +57,28 @@ OBS Studio → MediaMTX (RTMP ingest) → FFmpeg (encode + HLS) → Nginx (HTTP 
 | nginx    | `C:\tools\nginx-1.31.1\nginx.exe`      | ❌ (use full path) |
 | node/npm | `C:\Program Files\nodejs\`             | ✅                 |
 
-## Commands (Chapter 1)
+## Commands
 
 ### Quick Start (single command)
 
 ```powershell
-# Start all services (opens 4 separate windows, requests admin for firewall)
-.\start.cmd
+# Start all services (opens separate windows, requests admin for firewall)
+.\scripts\start.cmd
 
-# Stop all services (removes firewall rule)
-.\stop.cmd
+# Stop all services (removes firewall rules)
+.\scripts\stop.cmd
 ```
 
 ### LAN Access
 
-The player is accessible to any device on your local network. After running `start.cmd`, it prints your LAN URL (e.g. `http://192.168.1.x:8080`). Open that URL on any LAN device to watch the stream.
+After running `start.cmd`, it prints your LAN URLs:
+- **HLS player:** `http://<ip>:8080` — viewer-facing stream
+- **OPS monitor:** `http://<ip>:8080/monitor` — low-latency WebRTC feed
 
 ### Start the Pipeline (manual, in order)
 
 ```bash
-# Terminal 1: RTMP Ingest Server
+# Terminal 1: MediaMTX (RTMP ingest + WebRTC)
 cd mediamtx
 mediamtx mediamtx.yml
 
@@ -71,21 +86,13 @@ mediamtx mediamtx.yml
 cd ffmpeg
 bash stream.sh
 
-# Terminal 3: HTTP Delivery Server
+# Terminal 3: Nginx (HTTP delivery)
 cd nginx
-start-nginx.cmd          # PowerShell/Command Prompt
-# or from Git Bash:
-/c/tools/nginx-1.31.1/nginx.exe -p "D:/ott-lab/nginx/" -c "D:/ott-lab/nginx/nginx.conf"
+start-nginx.cmd
 
 # Terminal 4: Player Dev Server
 cd player
 npm run dev
-```
-
-### Stop the Pipeline (reverse order)
-
-```bash
-# Stop in reverse: OBS → Player (Ctrl+C) → Nginx (Ctrl+C) → FFmpeg (Ctrl+C) → MediaMTX (Ctrl+C)
 ```
 
 ### Player App
@@ -94,8 +101,15 @@ npm run dev
 cd player
 npm install          # Install dependencies
 npm run dev          # Start Vite dev server (http://localhost:5173)
-npm run build        # Build for production
+npm run build        # Build for production (output to dist/)
 ```
+
+### Routes
+
+| Route       | Component  | Protocol | Latency  | Use Case             |
+| ----------- | ---------- | -------- | -------- | -------------------- |
+| `/`         | Player     | HLS.js   | ~18-30s  | Viewer-facing stream |
+| `/monitor`  | Monitor    | WebRTC   | ~0.3-1s  | OPS team monitoring  |
 
 ## OBS Studio Configuration
 
@@ -111,6 +125,9 @@ npm run build        # Build for production
 - HLS.js handles playback in browsers without native HLS support
 - FFmpeg uses `temp_file` flag to work around Windows file locking
 - Nginx requires `mime.types` in the config directory (copied from `C:\tools\nginx-1.31.1\conf\`)
+- MediaMTX WebRTC uses WHEP protocol — browser connects to `http://<host>:8889/live/stream/whep`
+- Monitor component uses `window.location.hostname` for WHEP URL — auto-adapts to localhost or LAN IP
+- React Router handles client-side routing — nginx falls back to `index.html` for SPA routes
 
 ## Nginx Notes
 
@@ -118,16 +135,31 @@ npm run build        # Build for production
 - nginx config uses flat `location` blocks (no nested `if` blocks)
 - nginx requires `logs/` directory for pid and error logs
 - nginx requires `temp/` directory for client body and proxy temp files
+- SPA routing works via `try_files $uri $uri/ /index.html` — `/monitor` route served by React Router
 
 ## MediaMTX Notes
 
 - Config uses `paths:` format (v1.x+), not the old `pathMapping`
 - Auto-generates `auto.crt` and `auto.key` on first run (ignored in `.gitignore`)
 - Creates `mediamtx.log` in the working directory
+- WebRTC is enabled with `webrtc: yes` — no additional software needed
+- WHEP endpoint: `http://<host>:8889/<path>/whep`
+- For LAN, no STUN/TURN needed — static UDP port 8189 with `webrtcIPsFromInterfaces`
+- Built-in player available at `http://<host>:8889/<path>` (navigate in browser)
+
+## Firewall Ports
+
+| Port | Protocol | Service           | Purpose                   |
+| ---- | -------- | ----------------- | ------------------------- |
+| 8080 | TCP      | Nginx             | HTTP delivery (HLS + SPA) |
+| 8889 | TCP      | MediaMTX          | WHEP signaling            |
+| 8189 | UDP      | MediaMTX          | WebRTC media transport    |
+| 1935 | TCP      | MediaMTX          | RTMP ingest (local only)  |
+| 5173 | TCP      | Vite dev server   | Dev only (not in prod)    |
 
 ## Chapter Progression
 
-1. **Chapter 1:** Live streaming pipeline (current)
-2. **Chapter 2:** Low-latency monitoring feed
+1. **Chapter 1:** Live streaming pipeline (HLS) ✅
+2. **Chapter 2:** Low-latency OPS monitoring feed (WebRTC) — current
 3. **Chapter 3:** Cloud-ready architecture
 4. **Chapter 4:** On-demand video service + ad capabilities
