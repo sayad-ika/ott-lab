@@ -3,9 +3,13 @@ $root = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
 Write-Host "Starting OTT pipeline..." -ForegroundColor Cyan
 
 # Open firewall for LAN access
-Write-Host "  [0] Opening firewall port 8080..." -ForegroundColor Yellow
+Write-Host "  [0] Opening firewall ports..." -ForegroundColor Yellow
 netsh advfirewall firewall delete rule name="OTT-Lab-HTTP" | Out-Null
 netsh advfirewall firewall add rule name="OTT-Lab-HTTP" dir=in action=allow protocol=tcp localport=8080 | Out-Null
+netsh advfirewall firewall delete rule name="OTT-Lab-WebRTC-Signal" | Out-Null
+netsh advfirewall firewall add rule name="OTT-Lab-WebRTC-Signal" dir=in action=allow protocol=tcp localport=8889 | Out-Null
+netsh advfirewall firewall delete rule name="OTT-Lab-WebRTC-Media" | Out-Null
+netsh advfirewall firewall add rule name="OTT-Lab-WebRTC-Media" dir=in action=allow protocol=udp localport=8189 | Out-Null
 
 # 1. MediaMTX
 Write-Host "  [1/4] MediaMTX (port 1935)" -ForegroundColor Yellow
@@ -42,5 +46,6 @@ Write-Host ""
 $ip = (Get-NetIPAddress -AddressFamily IPv4 | Where-Object { $_.InterfaceAlias -notmatch 'Loopback' -and $_.IPAddress -notlike '169.*' } | Select-Object -First 1).IPAddress
 Write-Host "All services launched." -ForegroundColor Green
 Write-Host ""
-Write-Host "  LAN access: http://$ip`:8080" -ForegroundColor Cyan
+Write-Host "  HLS player:   http://$ip`:8080" -ForegroundColor Cyan
+Write-Host "  OPS monitor:  http://$ip`:8080/monitor" -ForegroundColor Cyan
 Write-Host "  Stop with: stop.cmd" -ForegroundColor Cyan

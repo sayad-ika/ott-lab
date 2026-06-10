@@ -12,8 +12,10 @@ Get-Process -Name "ffmpeg" -ErrorAction SilentlyContinue | Stop-Process -Force
 Write-Host "  [4/4] Stopping mediamtx" -ForegroundColor Yellow
 Get-Process -Name "mediamtx" -ErrorAction SilentlyContinue | Stop-Process -Force
 
-Write-Host "  Removing firewall rule..." -ForegroundColor Yellow
+Write-Host "  Removing firewall rules..." -ForegroundColor Yellow
 netsh advfirewall firewall delete rule name="OTT-Lab-HTTP" | Out-Null
+netsh advfirewall firewall delete rule name="OTT-Lab-WebRTC-Signal" | Out-Null
+netsh advfirewall firewall delete rule name="OTT-Lab-WebRTC-Media" | Out-Null
 
 Write-Host ""
 Write-Host "All services stopped." -ForegroundColor Green

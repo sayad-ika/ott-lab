@@ -1,4 +1,4 @@
-# MediaMTX Configuration for OTT Lab - Chapter 1
+# MediaMTX Configuration for OTT Lab - Chapter 1 + 2
 # RTMP ingest server for live streaming pipeline
 
 # RTMP Settings
@@ -8,9 +8,18 @@ rtmpAddress: :1935
 # Disable RTSP (port 8554 conflicts with Hyper-V reserved range)
 rtsp: no
 
+# WebRTC Settings (Chapter 2 — OPS low-latency feed)
+# Port 8889 (TCP): WHEP signaling — SDP offer/answer exchange
+# Port 8189 (UDP): ICE/DTLS media transport — actual audio/video RTP packets
+webrtc: yes
+webrtcAddress: :8889
+webrtcLocalUDPAddress: :8189
+webrtcAllowOrigins: ["*"]
+
 # Path Configuration
 # OBS pushes to: rtmp://localhost:1935/live/stream
 # FFmpeg reads from: rtmp://localhost:1935/live/stream
+# WebRTC clients read from: http://<server>:8889/live/stream/whep
 paths:
   all_others:
     source: publisher
