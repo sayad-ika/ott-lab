@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>OTT Live Stream Player</title>
+    <title>OTT Lab</title>
     <style>
       * { margin: 0; padding: 0; box-sizing: border-box; }
       body { background: #0a0a0a; }
@@ -58,6 +58,9 @@
       /* Volume slider - Firefox */
       input[type="range"].vol-slider::-moz-range { height: 3px; background: rgba(255,255,255,0.2); border-radius: 2px; border: none; }
       input[type="range"].vol-slider::-moz-range-thumb { width: 12px; height: 12px; border-radius: 50%; background: #e50914; border: none; cursor: pointer; }
+
+      /* Spinner animation for Monitor component */
+      @keyframes spin { to { transform: rotate(360deg); } }
     </style>
   </head>
   <body>
