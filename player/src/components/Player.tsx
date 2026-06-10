@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
+import { useParams } from 'react-router-dom'
 import Hls from 'hls.js'
 
-const HLS_URL = '/live/stream.m3u8'
-
 export function Player() {
+  const { stream = 'stream' } = useParams<{ stream: string }>()
+  const hlsUrl = `/live/${stream}/stream.m3u8`
   const videoRef = useRef<HTMLVideoElement>(null)
   const hlsRef = useRef<Hls | null>(null)
   const containerRef = useRef<HTMLDivElement>(null)
@@ -20,14 +21,14 @@ export function Player() {
     if (!video) return
 
     if (video.canPlayType('application/vnd.apple.mpegurl')) {
-      video.src = HLS_URL
+      video.src = hlsUrl
       video.play()
     } else if (Hls.isSupported()) {
       const hls = new Hls({
         liveSyncDurationCount: 3,
         liveMaxLatencyDurationCount: 6,
       })
-      hls.loadSource(HLS_URL)
+      hls.loadSource(hlsUrl)
       hls.attachMedia(video)
       hlsRef.current = hls
       hls.on(Hls.Events.MANIFEST_PARSED, () => {
@@ -46,7 +47,7 @@ export function Player() {
       video.removeEventListener('pause', onPause)
       hlsRef.current?.destroy()
     }
-  }, [])
+  }, [hlsUrl])
 
   const showControlsTemporarily = useCallback(() => {
     setShowControls(true)

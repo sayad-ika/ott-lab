@@ -21,23 +21,31 @@ ott-lab/
 ├── stream/                        # HLS output (segments + manifests)
 ├── player/                        # React + Vite + HLS.js + WebRTC player app
 │   └── src/
-│       ├── App.tsx                # Routing: / (HLS) and /monitor (WebRTC)
+│       ├── App.tsx                # Routing: / (gallery), /stream/:stream, /monitor/:stream
+│       ├── config/
+│       │   └── streams.ts         # Stream definitions (name + label)
 │       └── components/
-│           ├── Player.tsx         # HLS player (Chapter 1)
-│           └── Monitor.tsx        # WebRTC low-latency monitor (Chapter 2)
+│           ├── Gallery.tsx        # Stream listing page (Chapter 3)
+│           ├── Player.tsx         # HLS player (Chapter 1, multi-stream Chapter 3)
+│           └── Monitor.tsx        # WebRTC low-latency monitor (Chapter 2, multi-stream Chapter 3)
 └── .claude/plan/                  # Implementation plans
 ```
 
-## Architecture (Chapter 1 + 2)
+## Architecture (Chapter 3 — Multi-Stream)
 
 ```
-OBS Studio ──[RTMP:1935]──► MediaMTX ──┬──► FFmpeg (HLS) ──► Nginx:8080 ──► Player (/)
-                                        └──► WebRTC (WHEP:8889) ────────────► Monitor (/monitor)
+Device A ──[RTMP:1935/live/stream]──► MediaMTX ──┬──► FFmpeg #1 ──► stream/stream/  ──► Nginx:8080 ──► /stream/stream (HLS)
+                                                  └──► WebRTC      ──► /monitor/stream (WHEP)
+
+Device B ──[RTMP:1935/live/camera1]──► MediaMTX ──┬──► FFmpeg #2 ──► stream/camera1/ ──► Nginx:8080 ──► /stream/camera1 (HLS)
+                                                   └──► WebRTC       ──► /monitor/camera1 (WHEP)
 ```
 
-Two streams from a single RTMP ingest:
+N input streams, each with two outputs:
 - **HLS path** (Chapter 1): ~18-30s latency, scalable to many viewers
 - **WebRTC path** (Chapter 2): ~0.3-1s latency, for OPS team (2-3 viewers on LAN)
+
+Stream names are configured in `player/src/config/streams.ts` and `scripts/start.ps1`.
 
 ### Key Technologies
 
@@ -106,10 +114,11 @@ npm run build        # Build for production (output to dist/)
 
 ### Routes
 
-| Route       | Component  | Protocol | Latency  | Use Case             |
-| ----------- | ---------- | -------- | -------- | -------------------- |
-| `/`         | Player     | HLS.js   | ~18-30s  | Viewer-facing stream |
-| `/monitor`  | Monitor    | WebRTC   | ~0.3-1s  | OPS team monitoring  |
+| Route                | Component  | Protocol | Latency  | Use Case                |
+| -------------------- | ---------- | -------- | -------- | ----------------------- |
+| `/`                  | Gallery    | —        | —        | Stream listing          |
+| `/stream/:stream`    | Player     | HLS.js   | ~18-30s  | Viewer-facing stream    |
+| `/monitor/:stream`   | Monitor    | WebRTC   | ~0.3-1s  | OPS team monitoring     |
 
 ## OBS Studio Configuration
 
@@ -119,13 +128,14 @@ npm run build        # Build for production (output to dist/)
 
 ## Key Implementation Details
 
-- FFmpeg outputs HLS segments to `stream/`
-- Nginx serves HLS files from that directory on port 8080
-- Player fetches manifest from `/live/stream.m3u8` (relative URL, works on localhost and LAN)
+- Stream names are defined in `player/src/config/streams.ts` (shared config for the player app)
+- `start.ps1` has a matching `$streams` array — keep both in sync when adding/removing streams
+- Each stream gets its own FFmpeg process and HLS output directory (`stream/<name>/`)
+- MediaMTX auto-creates paths for any stream key pushed to `rtmp://<host>:1935/live/<key>`
+- Nginx `alias D:/ott-lab/stream/` serves `stream/<name>/stream.m3u8` at `/live/<name>/stream.m3u8`
+- Player and Monitor accept `:stream` URL param to dynamically build HLS/WHEP URLs
 - HLS.js handles playback in browsers without native HLS support
-- FFmpeg uses `temp_file` flag to work around Windows file locking
-- Nginx requires `mime.types` in the config directory (copied from `C:\tools\nginx-1.31.1\conf\`)
-- MediaMTX WebRTC uses WHEP protocol — browser connects to `http://<host>:8889/live/stream/whep`
+- MediaMTX WebRTC uses WHEP protocol — browser connects to `http://<host>:8889/live/<name>/whep`
 - Monitor component uses `window.location.hostname` for WHEP URL — auto-adapts to localhost or LAN IP
 - React Router handles client-side routing — nginx falls back to `index.html` for SPA routes
 
@@ -135,7 +145,7 @@ npm run build        # Build for production (output to dist/)
 - nginx config uses flat `location` blocks (no nested `if` blocks)
 - nginx requires `logs/` directory for pid and error logs
 - nginx requires `temp/` directory for client body and proxy temp files
-- SPA routing works via `try_files $uri $uri/ /index.html` — `/monitor` route served by React Router
+- SPA routing works via `try_files $uri $uri/ /index.html` — all SPA routes served by React Router
 
 ## MediaMTX Notes
 
@@ -154,12 +164,13 @@ npm run build        # Build for production (output to dist/)
 | 8080 | TCP      | Nginx             | HTTP delivery (HLS + SPA) |
 | 8889 | TCP      | MediaMTX          | WHEP signaling            |
 | 8189 | UDP      | MediaMTX          | WebRTC media transport    |
-| 1935 | TCP      | MediaMTX          | RTMP ingest (local only)  |
+| 1935 | TCP      | MediaMTX          | RTMP ingest (LAN)         |
 | 5173 | TCP      | Vite dev server   | Dev only (not in prod)    |
 
 ## Chapter Progression
 
 1. **Chapter 1:** Live streaming pipeline (HLS) ✅
-2. **Chapter 2:** Low-latency OPS monitoring feed (WebRTC) — current
-3. **Chapter 3:** Cloud-ready architecture
-4. **Chapter 4:** On-demand video service + ad capabilities
+2. **Chapter 2:** Low-latency OPS monitoring feed (WebRTC) ✅
+3. **Chapter 3:** Multi-stream pipeline — multiple input sources, stream gallery
+4. **Chapter 4:** Cloud-ready architecture
+5. **Chapter 5:** On-demand video service + ad capabilities

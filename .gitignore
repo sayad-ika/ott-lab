@@ -21,3 +21,6 @@ mediamtx/mediamtx.log
 nginx/logs/
 nginx/temp/
 nginx/mime.types
+
+stream/camera1/
+stream/stream/

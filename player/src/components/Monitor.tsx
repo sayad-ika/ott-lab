@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
+import { useParams } from 'react-router-dom'
 
 interface StreamMetrics {
   resolution: string
@@ -21,6 +22,7 @@ interface DebugEntry {
 type ConnectionState = 'new' | 'connecting' | 'connected' | 'disconnected' | 'failed' | 'closed'
 
 export function Monitor() {
+  const { stream = 'stream' } = useParams<{ stream: string }>()
   const videoRef = useRef<HTMLVideoElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   const controlsTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -41,7 +43,7 @@ export function Monitor() {
   const [debugLog, setDebugLog] = useState<DebugEntry[]>([])
   const [errorDetail, setErrorDetail] = useState<string | null>(null)
 
-  const whepUrlRef = useRef(`http://${window.location.hostname}:8889/live/stream/whep`)
+  const whepUrl = `http://${window.location.hostname}:8889/live/${stream}/whep`
 
   // Debug logger — writes to both console and on-screen panel
   const debug = useCallback((level: DebugEntry['level'], msg: string) => {
@@ -154,7 +156,6 @@ export function Monitor() {
     peerConnectionRef.current = pc
     setConnectionState('connecting')
 
-    const whepUrl = whepUrlRef.current
     debug('info', `Connecting to ${whepUrl}`)
 
     // Request video and audio tracks from the server
@@ -218,7 +219,7 @@ export function Monitor() {
           if (parsed.error) {
             friendlyError = parsed.error
             if (parsed.error.includes('no stream')) {
-              friendlyError = 'No stream available — is OBS streaming to rtmp://localhost:1935/live/stream?'
+              friendlyError = `No stream available — is a device streaming to rtmp://<host>:1935/live/${stream}?`
             }
           }
         } catch { /* not JSON */ }
@@ -270,13 +271,13 @@ export function Monitor() {
       debug('error', `Connection failed: ${msg}`)
       setConnectionState('failed')
     }
-  }, [disconnect, startStatsCollection, debug])
+  }, [disconnect, startStatsCollection, debug, whepUrl])
 
   // Connect on mount, disconnect on unmount
   useEffect(() => {
     connect()
     return () => disconnect()
-  }, [connect, disconnect])
+  }, [connect, disconnect, stream])
 
   // Auto-hide controls
   const showControlsTemporarily = useCallback(() => {
