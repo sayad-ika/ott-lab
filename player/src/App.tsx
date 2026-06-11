@@ -6,11 +6,19 @@ import { Gallery } from './components/Gallery'
 import { OpsDashboard } from './components/OpsDashboard'
 import { VodLibrary } from './components/VodLibrary'
 import { VodPlayer } from './components/VodPlayer'
-import { VOD_RECORDINGS } from './config/vod'
+import { useVodRecordings } from './hooks/useVodRecordings'
 
 function VodPlayerPage() {
   const { id } = useParams<{ id: string }>()
-  const recording = VOD_RECORDINGS.find((r) => r.id === id)
+  const { recordings, loading } = useVodRecordings()
+  const recording = recordings.find((r) => r.id === id)
+  if (loading) {
+    return (
+      <div style={{ textAlign: 'center', padding: '60px 20px', color: 'rgba(255,255,255,0.4)' }}>
+        <p>Loading...</p>
+      </div>
+    )
+  }
   if (!recording) {
     return (
       <div style={{ textAlign: 'center', padding: '60px 20px', color: 'rgba(255,255,255,0.5)' }}>

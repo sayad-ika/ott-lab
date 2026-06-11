@@ -151,6 +151,72 @@ $playlistLines += "#EXT-X-ENDLIST"
 
 [System.IO.File]::WriteAllLines("$outDir\index.m3u8", $playlistLines)
 
+# ── Step 4: Update manifest.json ──
+Write-Host "Updating VOD manifest..." -ForegroundColor Yellow
+
+$manifestPath = "$root\vod\manifest.json"
+$manifest = @()
+
+# Load existing manifest if present
+if (Test-Path $manifestPath) {
+    try {
+        $existing = Get-Content $manifestPath -Raw | ConvertFrom-Json
+        # Rebuild as array (ConvertFrom-Json returns $null, single object, or array)
+        if ($null -ne $existing) {
+            $manifest = @($existing)
+        }
+    } catch {
+        Write-Host "  WARN: Could not parse existing manifest, regenerating." -ForegroundColor Yellow
+    }
+}
+
+# Remove any entry with the same id (re-package scenario)
+$manifest = @($manifest | Where-Object { $_.id -ne $outName })
+
+# Derive stream name and recorded date from the directory name
+# Format: <stream>_<date>_<time>  e.g. stream_2026-06-10_15-18-10
+$parts = $outName -split '_', 2
+$derivedStream = if ($parts.Count -ge 1) { $parts[0] } else { 'unknown' }
+
+# Parse ISO date from the directory name (after first _)
+$derivedRecordedAt = ''
+if ($parts.Count -ge 2) {
+    $dateTimeStr = $parts[1] -replace '_', '-'
+    # dateTimeStr is like "2026-06-10-15-18-10" -> "2026-06-10T15:18:10"
+    $dateComponents = $dateTimeStr -split '-'
+    if ($dateComponents.Count -ge 6) {
+        $derivedRecordedAt = "$($dateComponents[0])-$($dateComponents[1])-$($dateComponents[2])T$($dateComponents[3]):$($dateComponents[4]):$($dateComponents[5])"
+    }
+}
+
+# Build human-readable label
+$labelStream = $derivedStream
+$labelDate = ''
+if ($derivedRecordedAt) {
+    try {
+        $dt = [DateTime]::Parse($derivedRecordedAt)
+        $labelDate = $dt.ToString('MMM d, yyyy')
+    } catch {
+        $labelDate = $derivedRecordedAt.Substring(0, [Math]::Min(10, $derivedRecordedAt.Length))
+    }
+}
+$label = "$labelStream"
+if ($labelDate) { $label += " - $labelDate" }
+
+$newEntry = @{
+    id          = $outName
+    stream      = $derivedStream
+    label       = $label
+    recordedAt  = $derivedRecordedAt
+}
+
+$manifest += $newEntry
+
+# Write manifest
+$manifest | ConvertTo-Json -Depth 3 | Set-Content -Path $manifestPath -Encoding UTF8
+
+Write-Host "Manifest updated: $manifestPath" -ForegroundColor Green
+
 Write-Host ""
 Write-Host "VOD packaged: $outDir" -ForegroundColor Green
 Write-Host "  Playlist: $outDir\index.m3u8" -ForegroundColor Green

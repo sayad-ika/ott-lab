@@ -1,7 +1,9 @@
 import { Link } from 'react-router-dom'
-import { VOD_RECORDINGS } from '../config/vod'
+import { useVodRecordings } from '../hooks/useVodRecordings'
 
 export function VodLibrary() {
+  const { recordings } = useVodRecordings()
+
   return (
     <div style={styles.page}>
       <div style={styles.header}>
@@ -9,7 +11,7 @@ export function VodLibrary() {
         <p style={styles.subtitle}>Select a recording to watch</p>
       </div>
       <div style={styles.grid}>
-        {VOD_RECORDINGS.map((r) => (
+        {recordings.map((r) => (
           <div key={r.id} style={styles.card}>
             <div style={styles.cardHeader}>
               <span style={styles.badge}>VOD</span>
@@ -47,7 +49,7 @@ export function VodLibrary() {
             </div>
           </div>
         ))}
-        {VOD_RECORDINGS.length === 0 && (
+        {recordings.length === 0 && (
           <div style={styles.empty}>
             <p style={styles.emptyText}>No recordings available yet.</p>
             <p style={styles.emptyHint}>Recordings will appear here after packaging with package-vod.ps1</p>

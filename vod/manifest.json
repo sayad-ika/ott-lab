@@ -1,0 +1,20 @@
+﻿[
+    {
+        "id":  "stream_2026-06-10_15-18-10",
+        "stream":  "stream",
+        "label":  "Main Camera â€” Jun 10, 2026",
+        "recordedAt":  "2026-06-10T15:18:10"
+    },
+    {
+        "id":  "camera1_2026-06-11_14-22-47",
+        "stream":  "camera1",
+        "label":  "Camera 1 â€” Jun 11, 2026",
+        "recordedAt":  "2026-06-11T14:22:47"
+    },
+    {
+        "label":  "stream - Jun 11, 2026",
+        "id":  "stream_2026-06-11_14-03-45",
+        "recordedAt":  "2026-06-11T14:03:45",
+        "stream":  "stream"
+    }
+]

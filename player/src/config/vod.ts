@@ -13,4 +13,10 @@ export const VOD_RECORDINGS: VodRecording[] = [
     label: 'Main Camera — Jun 10, 2026',
     recordedAt: '2026-06-10T15:18:10',
   },
+  {
+    id: 'camera1_2026-06-11_14-22-47',
+    stream: 'camera1',
+    label: 'Camera 1 — Jun 11, 2026',
+    recordedAt: '2026-06-11T14:22:47',
+  },
 ]

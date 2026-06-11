@@ -27,13 +27,16 @@ ott-lab/
 │   ├── source/                    # Raw ad videos (drop MP4s here)
 │   └── prepared/                  # Transcoded ad HLS segments
 ├── vod/                           # VOD HLS output (Chapter 5)
+│   ├── manifest.json              # Auto-generated VOD listing (package-vod.ps1 updates this)
 │   └── <name>/                    # Combined playlist + ad/recording segments
 ├── player/                        # React + Vite + HLS.js + WebRTC player app
 │   └── src/
 │       ├── App.tsx                # Routing: / (gallery), /stream/:stream, /monitor/:stream, /vod
 │       ├── config/
 │       │   ├── streams.ts         # Stream definitions (name + label)
-│       │   └── vod.ts             # VOD recording manifest
+│       │   └── vod.ts             # VOD recording manifest (fallback, used when manifest.json unavailable)
+│       ├── hooks/
+│       │   └── useVodRecordings.ts  # Fetches /vod/manifest.json at runtime, falls back to vod.ts
 │       └── components/
 │           ├── Gallery.tsx        # Stream listing page (Chapter 3)
 │           ├── Player.tsx         # HLS player (Chapter 1, multi-stream Chapter 3)
@@ -69,9 +72,13 @@ Recording MKV ──► package-vod.ps1 ──┬──► ads/prepared/<name>/ 
                                         ├── recording/*.ts
                                         └── index.m3u8 (combined with EXT-X-DISCONTINUITY)
                                                 │
+                                        vod/manifest.json (auto-updated by package-vod.ps1)
+                                                │
                                         Nginx:8080/vod/
                                                 │
-                                        VodPlayer (HLS.js, seek bar)
+                                        useVodRecordings() hook fetches manifest.json
+                                                │
+                                        VodLibrary + VodPlayer (HLS.js, seek bar)
 ```
 
 Stream names are configured in `player/src/config/streams.ts` and `scripts/start.ps1`.
@@ -183,10 +190,13 @@ npm run build        # Build for production (output to dist/)
 - MediaMTX WebRTC uses WHEP protocol — browser connects to `http://<host>:8889/live/<name>/whep`
 - Monitor component uses `window.location.hostname` for WHEP URL — auto-adapts to localhost or LAN IP
 - React Router handles client-side routing — nginx falls back to `index.html` for SPA routes
-- VOD playlists use `#EXT-X-DISCONTINUITY` to stitch ad and recording segments — HLS.js handles this natively
+- VOD playlists use `#EXT-X-DISCONTINUITY` to stitch ad and recording segments -- HLS.js handles this natively
+- **PowerShell encoding:** `.ps1` scripts must use ASCII-safe strings only — no em-dash (`—`), curly quotes, or other Unicode punctuation. PowerShell 5.1 will fail to parse these characters.
 - `package-vod.ps1` auto-prepares ads (1920x1080, 60fps, H.264, AAC) when `-AdFile` is provided, skips if already prepared
 - `package-vod.ps1` uses `-c:v copy` for recordings (already H.264) and `-c:a aac` for audio (Vorbis→AAC)
-- VOD recordings are listed in `player/src/config/vod.ts` — manual manifest, update after packaging
+- `package-vod.ps1` auto-updates `vod/manifest.json` after each packaging run — the player fetches this at runtime via `useVodRecordings()` hook
+- `player/src/config/vod.ts` is the fallback manifest (hardcoded) — only used if `manifest.json` fetch fails
+- When adding VOD support for a new recording, run `package-vod.cmd` — no manual edits needed
 
 ## Nginx Notes
 
