@@ -14,21 +14,32 @@ ott-lab/
 │   ├── start.cmd                  # One-command pipeline startup
 │   ├── start.ps1                  # Full pipeline launcher
 │   ├── stop.cmd                   # One-command pipeline shutdown
-│   └── stop.ps1                   # Full pipeline teardown
+│   ├── stop.ps1                   # Full pipeline teardown
+│   ├── package-vod.cmd            # Package recording as VOD with pre-roll (Chapter 5)
+│   ├── package-vod.ps1            # (backend for package-vod.cmd)
+│   └── start-nginx.cmd            # Start nginx server
 ├── mediamtx/                      # RTMP ingest + WebRTC server config
 ├── ffmpeg/                        # Encoding + HLS packaging scripts
 ├── nginx/                         # HTTP delivery + caching config
 ├── stream/                        # HLS output (segments + manifests)
 ├── recordings/                    # Stream recordings (MKV, timestamped)
+├── ads/                           # Ad source + prepared clips (Chapter 5)
+│   ├── source/                    # Raw ad videos (drop MP4s here)
+│   └── prepared/                  # Transcoded ad HLS segments
+├── vod/                           # VOD HLS output (Chapter 5)
+│   └── <name>/                    # Combined playlist + ad/recording segments
 ├── player/                        # React + Vite + HLS.js + WebRTC player app
 │   └── src/
-│       ├── App.tsx                # Routing: / (gallery), /stream/:stream, /monitor/:stream
+│       ├── App.tsx                # Routing: / (gallery), /stream/:stream, /monitor/:stream, /vod
 │       ├── config/
-│       │   └── streams.ts         # Stream definitions (name + label)
+│       │   ├── streams.ts         # Stream definitions (name + label)
+│       │   └── vod.ts             # VOD recording manifest
 │       └── components/
 │           ├── Gallery.tsx        # Stream listing page (Chapter 3)
 │           ├── Player.tsx         # HLS player (Chapter 1, multi-stream Chapter 3)
-│           └── Monitor.tsx        # WebRTC low-latency monitor (Chapter 2, multi-stream Chapter 3)
+│           ├── Monitor.tsx        # WebRTC low-latency monitor (Chapter 2, multi-stream Chapter 3)
+│           ├── VodPlayer.tsx      # VOD player with seek bar (Chapter 5)
+│           └── VodLibrary.tsx     # Recording browser (Chapter 5)
 └── .claude/plan/                  # Implementation plans
 ```
 
@@ -46,6 +57,22 @@ N input streams, each with three outputs:
 - **HLS path** (Chapter 1): ~18-30s latency, scalable to many viewers
 - **WebRTC path** (Chapter 2): ~0.3-1s latency, for OPS team (2-3 viewers on LAN)
 - **Recording path** (Chapter 3): full stream saved as MKV to `recordings/<name>/`
+
+### VOD Pipeline (Chapter 5)
+
+```
+Recording MKV ──► package-vod.ps1 ──┬──► ads/prepared/<name>/ (auto-prepares ad if needed)
+ Ad MP4 ────────────────────────────┘           │
+                                                ▼
+                                        vod/<name>/
+                                        ├── ad/*.ts
+                                        ├── recording/*.ts
+                                        └── index.m3u8 (combined with EXT-X-DISCONTINUITY)
+                                                │
+                                        Nginx:8080/vod/
+                                                │
+                                        VodPlayer (HLS.js, seek bar)
+```
 
 Stream names are configured in `player/src/config/streams.ts` and `scripts/start.ps1`.
 
@@ -116,11 +143,26 @@ npm run build        # Build for production (output to dist/)
 
 ### Routes
 
-| Route                | Component  | Protocol | Latency  | Use Case                |
-| -------------------- | ---------- | -------- | -------- | ----------------------- |
-| `/`                  | Gallery    | —        | —        | Stream listing          |
-| `/stream/:stream`    | Player     | HLS.js   | ~18-30s  | Viewer-facing stream    |
-| `/monitor/:stream`   | Monitor    | WebRTC   | ~0.3-1s  | OPS team monitoring     |
+| Route                | Component   | Protocol | Latency  | Use Case                |
+| -------------------- | ----------- | -------- | -------- | ----------------------- |
+| `/`                  | Gallery     | —        | —        | Stream listing          |
+| `/stream/:stream`    | Player      | HLS.js   | ~18-30s  | Viewer-facing stream    |
+| `/monitor/:stream`   | Monitor     | WebRTC   | ~0.3-1s  | OPS team monitoring     |
+| `/vod`               | VodLibrary  | —        | —        | Recording browser       |
+| `/vod/:id`           | VodPlayer   | HLS.js   | VOD      | On-demand playback      |
+
+### VOD Packaging Commands
+
+```powershell
+# Package a recording with pre-roll ad (auto-prepares ad if not already done)
+.\scripts\package-vod.cmd -Stream "stream" -Recording "stream_2026-06-10_15-18-10.mkv" -AdName "promo15" -AdFile "ads\source\promo.mp4"
+
+# Package a recording with already-prepared ad (no -AdFile needed)
+.\scripts\package-vod.cmd -Stream "stream" -Recording "stream_2026-06-10_15-18-10.mkv" -AdName "promo15"
+
+# Package a recording without ad
+.\scripts\package-vod.cmd -Stream "stream" -Recording "stream_2026-06-10_15-18-10.mkv"
+```
 
 ## OBS Studio Configuration
 
@@ -130,6 +172,7 @@ npm run build        # Build for production (output to dist/)
 
 ## Key Implementation Details
 
+- **Always use `.cmd` wrappers to run `.ps1` scripts** — never run `.ps1` files directly (they may open in a text editor instead of executing). Use `.\scripts\<name>.cmd` which calls `powershell -ExecutionPolicy Bypass -File` internally.
 - Stream names are defined in `player/src/config/streams.ts` (shared config for the player app)
 - `start.ps1` has a matching `$streams` array — keep both in sync when adding/removing streams
 - Each stream gets its own FFmpeg process, HLS output directory (`stream/<name>/`), and recording (`recordings/<name>/`)
@@ -140,6 +183,10 @@ npm run build        # Build for production (output to dist/)
 - MediaMTX WebRTC uses WHEP protocol — browser connects to `http://<host>:8889/live/<name>/whep`
 - Monitor component uses `window.location.hostname` for WHEP URL — auto-adapts to localhost or LAN IP
 - React Router handles client-side routing — nginx falls back to `index.html` for SPA routes
+- VOD playlists use `#EXT-X-DISCONTINUITY` to stitch ad and recording segments — HLS.js handles this natively
+- `package-vod.ps1` auto-prepares ads (1920x1080, 60fps, H.264, AAC) when `-AdFile` is provided, skips if already prepared
+- `package-vod.ps1` uses `-c:v copy` for recordings (already H.264) and `-c:a aac` for audio (Vorbis→AAC)
+- VOD recordings are listed in `player/src/config/vod.ts` — manual manifest, update after packaging
 
 ## Nginx Notes
 
