@@ -1,8 +1,25 @@
 import { useState, useEffect } from 'react'
-import { Routes, Route, Link, useLocation } from 'react-router-dom'
+import { Routes, Route, Link, useLocation, useParams } from 'react-router-dom'
 import { Player } from './components/Player'
 import { Monitor } from './components/Monitor'
 import { Gallery } from './components/Gallery'
+import { VodLibrary } from './components/VodLibrary'
+import { VodPlayer } from './components/VodPlayer'
+import { VOD_RECORDINGS } from './config/vod'
+
+function VodPlayerPage() {
+  const { id } = useParams<{ id: string }>()
+  const recording = VOD_RECORDINGS.find((r) => r.id === id)
+  if (!recording) {
+    return (
+      <div style={{ textAlign: 'center', padding: '60px 20px', color: 'rgba(255,255,255,0.5)' }}>
+        <h2>Recording not found</h2>
+        <p><Link to="/vod" style={{ color: '#e50914' }}>Back to On Demand</Link></p>
+      </div>
+    )
+  }
+  return <VodPlayer url={`/vod/${recording.id}/index.m3u8`} title={recording.label} />
+}
 
 export default function App() {
   const location = useLocation()
@@ -26,6 +43,15 @@ export default function App() {
         >
           Streams
         </Link>
+        <Link
+          to="/vod"
+          style={{
+            ...styles.link,
+            ...(location.pathname.startsWith('/vod') ? styles.linkActive : {}),
+          }}
+        >
+          On Demand
+        </Link>
         <span style={styles.clock}>
           {time.toLocaleTimeString('en-US', { hour12: false })}
         </span>
@@ -36,6 +62,8 @@ export default function App() {
           <Route path="/" element={<Gallery />} />
           <Route path="/stream/:stream" element={<Player />} />
           <Route path="/monitor/:stream" element={<Monitor />} />
+          <Route path="/vod" element={<VodLibrary />} />
+          <Route path="/vod/:id" element={<VodPlayerPage />} />
         </Routes>
       </main>
     </div>
