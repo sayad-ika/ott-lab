@@ -3,6 +3,7 @@ import { Routes, Route, Link, useLocation, useParams } from 'react-router-dom'
 import { Player } from './components/Player'
 import { Monitor } from './components/Monitor'
 import { Gallery } from './components/Gallery'
+import { OpsDashboard } from './components/OpsDashboard'
 import { VodLibrary } from './components/VodLibrary'
 import { VodPlayer } from './components/VodPlayer'
 import { VOD_RECORDINGS } from './config/vod'
@@ -44,6 +45,15 @@ export default function App() {
           Streams
         </Link>
         <Link
+          to="/ops"
+          style={{
+            ...styles.link,
+            ...(location.pathname === '/ops' ? styles.linkActive : {}),
+          }}
+        >
+          OPS Monitor
+        </Link>
+        <Link
           to="/vod"
           style={{
             ...styles.link,
@@ -62,6 +72,7 @@ export default function App() {
           <Route path="/" element={<Gallery />} />
           <Route path="/stream/:stream" element={<Player />} />
           <Route path="/monitor/:stream" element={<Monitor />} />
+          <Route path="/ops" element={<OpsDashboard />} />
           <Route path="/vod" element={<VodLibrary />} />
           <Route path="/vod/:id" element={<VodPlayerPage />} />
         </Routes>
