@@ -15,6 +15,11 @@ ott-lab/
 │   ├── start.ps1                  # Full pipeline launcher
 │   ├── stop.cmd                   # One-command pipeline shutdown
 │   ├── stop.ps1                   # Full pipeline teardown
+│   ├── ad-proxy.mjs               # HLS manifest proxy for ad break injection (Chapter 4)
+│   ├── start-ad-break.cmd         # Trigger an ad break on a live stream (Chapter 4)
+│   ├── start-ad-break.ps1         # (backend for start-ad-break.cmd)
+│   ├── stop-ad-break.cmd          # Cancel an active ad break (Chapter 4)
+│   ├── stop-ad-break.ps1          # (backend for stop-ad-break.cmd)
 │   ├── package-vod.cmd            # Package recording as VOD with pre-roll (Chapter 5)
 │   ├── package-vod.ps1            # (backend for package-vod.cmd)
 │   └── start-nginx.cmd            # Start nginx server
@@ -61,6 +66,25 @@ N input streams, each with three outputs:
 - **WebRTC path** (Chapter 2): ~0.3-1s latency, for OPS team (2-3 viewers on LAN)
 - **Recording path** (Chapter 3): full stream saved as MKV to `recordings/<name>/`
 
+### Ad Break System (Chapter 4)
+
+```
+Operator ──► start-ad-break.cmd ──► POST /ad-break/<stream> ──► Ad Proxy :8081
+                                                                       │
+FFmpeg ──► stream/<name>/stream.m3u8 ──► Ad Proxy :8081 ──► Nginx:8080 ──► Viewer
+                (live segments)           (injects ad       (proxy_pass)
+                                         segments with
+                                         DISCONTINUITY)
+```
+
+The ad proxy (`scripts/ad-proxy.mjs`) is a Node.js HTTP server on port 8081 that:
+- Normally: proxies the FFmpeg-written HLS manifest without modification
+- During ad break: injects `#EXT-X-DISCONTINUITY` + ad segments into the manifest
+- After ad completes: transitions back to live with a DISCONTINUITY boundary
+- All HLS requests route through the proxy via Nginx `proxy_pass`
+
+State machine per stream: `live` → `playing` (ad segments injected) → `transition_out` (DISCONTINUITY + live segments) → `live`
+
 ### VOD Pipeline (Chapter 5)
 
 ```
@@ -89,6 +113,7 @@ Stream names are configured in `player/src/config/streams.ts` and `scripts/start
 - **WebRTC Signaling:** MediaMTX WHEP on port 8889 (TCP)
 - **WebRTC Media:** MediaMTX ICE/DTLS on port 8189 (UDP)
 - **Encoder:** FFmpeg (H.264/AAC, 720p30, HLS 6s segments)
+- **Ad Proxy:** Node.js on port 8081 (manifest manipulation)
 - **HTTP Server:** Nginx on port 8080
 - **Player:** React + TypeScript + Vite on port 5173
 
@@ -171,6 +196,19 @@ npm run build        # Build for production (output to dist/)
 .\scripts\package-vod.cmd -Stream "stream" -Recording "stream_2026-06-10_15-18-10.mkv"
 ```
 
+### Ad Break Commands (Chapter 4)
+
+```powershell
+# Start an ad break (uses prepared ad from ads/prepared/)
+.\scripts\start-ad-break.cmd -Stream "stream" -Ad "MW4"
+
+# Cancel an active ad break
+.\scripts\stop-ad-break.cmd -Stream "stream"
+
+# Check ad break status (JSON)
+Invoke-RestMethod http://localhost:8081/ad-break/status
+```
+
 ## OBS Studio Configuration
 
 - **Stream Type:** Custom
@@ -198,6 +236,19 @@ npm run build        # Build for production (output to dist/)
 - `player/src/config/vod.ts` is the fallback manifest (hardcoded) — only used if `manifest.json` fetch fails
 - When adding VOD support for a new recording, run `package-vod.cmd` — no manual edits needed
 
+### Ad Break Implementation Details (Chapter 4)
+
+- The ad proxy (`scripts/ad-proxy.mjs`) runs on port 8081 and is started automatically by `start.ps1`
+- Nginx proxies all `/live/` requests through the ad proxy instead of serving files directly
+- Ad assets must be pre-packaged in `ads/prepared/<name>/` using `package-vod.ps1` or equivalent FFmpeg commands
+- The `ads/prepared/MW4/` ad is included as a demo (11 segments, ~60s total)
+- When an ad break starts, the proxy reads the live manifest, appends `#EXT-X-DISCONTINUITY` + ad segments
+- After the ad duration elapses (+2s buffer), the proxy transitions back to live with another `#EXT-X-DISCONTINUITY`
+- The `transition_out` state lasts 12s (2 segment durations) to let HLS.js re-sync to the live edge
+- The player polls `/ad-break/status` every 2s and shows an "AD" badge during ad breaks
+- Ad segments are served from `ads/prepared/<name>/` via the `/ads/<name>/<file>.ts` route on the proxy
+- **Limitations:** Global ad breaks (all viewers see same ad), no SCTE-35, no per-viewer targeting, no impression tracking, late joiners may miss part of the ad, no DVR resume after ad ends
+
 ## Nginx Notes
 
 - Use `start-nginx.cmd` or run with `-p` prefix flag from the nginx directory
@@ -221,6 +272,7 @@ npm run build        # Build for production (output to dist/)
 | Port | Protocol | Service           | Purpose                   |
 | ---- | -------- | ----------------- | ------------------------- |
 | 8080 | TCP      | Nginx             | HTTP delivery (HLS + SPA) |
+| 8081 | TCP      | Ad Proxy          | HLS manifest manipulation |
 | 8889 | TCP      | MediaMTX          | WHEP signaling            |
 | 8189 | UDP      | MediaMTX          | WebRTC media transport    |
 | 1935 | TCP      | MediaMTX          | RTMP ingest (LAN)         |
@@ -230,6 +282,6 @@ npm run build        # Build for production (output to dist/)
 
 1. **Chapter 1:** Live streaming pipeline (HLS) ✅
 2. **Chapter 2:** Low-latency OPS monitoring feed (WebRTC) ✅
-3. **Chapter 3:** Multi-stream pipeline — multiple input sources, stream gallery
-4. **Chapter 4:** Cloud-ready architecture
-5. **Chapter 5:** On-demand video service + ad capabilities
+3. **Chapter 3:** Multi-stream pipeline — multiple input sources, stream gallery ✅
+4. **Chapter 4:** Manual mid-stream ad break insertion
+5. **Chapter 5:** On-demand video service + ad capabilities ✅

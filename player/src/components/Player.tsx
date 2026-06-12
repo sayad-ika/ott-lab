@@ -2,6 +2,14 @@ import { useEffect, useRef, useState, useCallback } from 'react'
 import { useParams } from 'react-router-dom'
 import Hls from 'hls.js'
 
+interface AdBreakStatus {
+  state: string
+  ad: string
+  elapsed: number
+  totalDuration: number
+  remaining: number
+}
+
 export function Player() {
   const { stream = 'stream' } = useParams<{ stream: string }>()
   const hlsUrl = `/live/${stream}/stream.m3u8`
@@ -15,6 +23,7 @@ export function Player() {
   const [isMuted, setIsMuted] = useState(false)
   const [isFullscreen, setIsFullscreen] = useState(false)
   const [showControls, setShowControls] = useState(true)
+  const [adBreak, setAdBreak] = useState<AdBreakStatus | null>(null)
 
   useEffect(() => {
     const video = videoRef.current
@@ -25,8 +34,8 @@ export function Player() {
       video.play()
     } else if (Hls.isSupported()) {
       const hls = new Hls({
-        liveSyncDurationCount: 3,
-        liveMaxLatencyDurationCount: 6,
+        liveSyncDurationCount: 2,
+        liveMaxLatencyDurationCount: 4,
       })
       hls.loadSource(hlsUrl)
       hls.attachMedia(video)
@@ -48,6 +57,22 @@ export function Player() {
       hlsRef.current?.destroy()
     }
   }, [hlsUrl])
+
+  // Poll ad break status
+  useEffect(() => {
+    const poll = () => {
+      fetch(`/ad-break/status`)
+        .then(r => r.json())
+        .then(data => {
+          const status = data[stream]
+          setAdBreak(status && status.state !== 'live' ? status : null)
+        })
+        .catch(() => setAdBreak(null))
+    }
+    poll()
+    const id = setInterval(poll, 2000)
+    return () => clearInterval(id)
+  }, [stream])
 
   const showControlsTemporarily = useCallback(() => {
     setShowControls(true)
@@ -196,8 +221,16 @@ export function Player() {
               />
             </div>
 
-            <span style={styles.liveBadge}>
-              <span style={styles.liveDot} /> LIVE
+            <span style={adBreak ? styles.adBadge : styles.liveBadge}>
+              {adBreak ? (
+                <>
+                  <span style={styles.adDot} /> AD ({Math.ceil(adBreak.remaining)}s)
+                </>
+              ) : (
+                <>
+                  <span style={styles.liveDot} /> LIVE
+                </>
+              )}
             </span>
           </div>
 
@@ -312,6 +345,25 @@ const styles: Record<string, React.CSSProperties> = {
     height: '6px',
     borderRadius: '50%',
     backgroundColor: '#e50914',
+  },
+  adBadge: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '5px',
+    color: '#ffc107',
+    fontSize: '12px',
+    fontWeight: 600,
+    letterSpacing: '0.5px',
+    backgroundColor: 'rgba(255,193,7,0.15)',
+    padding: '2px 8px',
+    borderRadius: '4px',
+  },
+  adDot: {
+    width: '6px',
+    height: '6px',
+    borderRadius: '50%',
+    backgroundColor: '#ffc107',
+    animation: 'pulse 1s ease-in-out infinite',
   },
   volumeGroup: {
     display: 'flex',

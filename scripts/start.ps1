@@ -23,7 +23,7 @@ netsh advfirewall firewall delete rule name="OTT-Lab-RTMP" | Out-Null
 netsh advfirewall firewall add rule name="OTT-Lab-RTMP" dir=in action=allow protocol=tcp localport=1935 | Out-Null
 
 # 1. MediaMTX
-Write-Host "  [1/4] MediaMTX (port 1935)" -ForegroundColor Yellow
+Write-Host "  [1/5] MediaMTX (port 1935)" -ForegroundColor Yellow
 Start-Process powershell -ArgumentList "-NoExit", "-Command", "cd '$root\mediamtx'; mediamtx mediamtx.yml"
 Start-Sleep -Seconds 2
 
@@ -36,7 +36,7 @@ Write-Host ""
 Read-Host "  Press ENTER once all streams are active..."
 
 # 2. FFmpeg -- one process per stream (HLS + recording)
-Write-Host "  [2/4] FFmpeg (RTMP -> HLS + MKV) - $($streams.Count) streams" -ForegroundColor Yellow
+Write-Host "  [2/5] FFmpeg (RTMP -> HLS + MKV) - $($streams.Count) streams" -ForegroundColor Yellow
 $streamDir = "$root\stream"
 $recordingsDir = "$root\recordings"
 foreach ($s in $streams) {
@@ -65,15 +65,28 @@ Write-Host "  Building player..." -ForegroundColor Yellow
 Set-Location "$root\player"
 npm run build 2>&1 | Out-Null
 
-# 3. Nginx
-Write-Host "  [3/4] Nginx (port 8080)" -ForegroundColor Yellow
+# 3. Ad proxy (manifest manipulation for ad breaks)
+Write-Host "  [3/5] Ad proxy (port 8081)" -ForegroundColor Yellow
+# Kill any existing ad-proxy before starting a new one
+$existingProxy = Get-NetTCPConnection -LocalPort 8081 -ErrorAction SilentlyContinue | Select-Object -First 1
+if ($existingProxy) {
+    $proxyPid = $existingProxy.OwningProcess
+    Write-Host "      Killing existing proxy (PID $proxyPid)..." -ForegroundColor DarkGray
+    Stop-Process -Id $proxyPid -Force -ErrorAction SilentlyContinue
+    Start-Sleep -Seconds 1
+}
+Start-Process powershell -ArgumentList "-NoExit", "-Command", "node '$root\scripts\ad-proxy.mjs'"
+Start-Sleep -Seconds 2
+
+# 4. Nginx
+Write-Host "  [4/5] Nginx (port 8080)" -ForegroundColor Yellow
 $nginxExe = "C:\tools\nginx-1.31.1\nginx.exe"
 $nginxPrefix = "$root\nginx"
 $nginxConf = "$root\nginx\nginx.conf"
 Start-Process powershell -ArgumentList "-NoExit", "-Command", "& '$nginxExe' -p '$nginxPrefix' -c '$nginxConf'"
 
-# 4. Player dev server
-Write-Host "  [4/4] Vite player (port 5173)" -ForegroundColor Yellow
+# 5. Player dev server
+Write-Host "  [5/5] Vite player (port 5173)" -ForegroundColor Yellow
 Start-Process powershell -ArgumentList "-NoExit", "-Command", "cd '$root\player'; npm run dev"
 
 Write-Host ""
@@ -90,3 +103,7 @@ foreach ($s in $streams) {
 }
 Write-Host ""
 Write-Host "  Stop with: stop.cmd" -ForegroundColor Cyan
+Write-Host ""
+Write-Host "  Ad breaks:" -ForegroundColor Magenta
+Write-Host "    Start:  .\scripts\start-ad-break.cmd -Stream `"stream`" -Ad `"MW4`"" -ForegroundColor DarkGray
+Write-Host "    Cancel: .\scripts\stop-ad-break.cmd -Stream `"stream`"" -ForegroundColor DarkGray
