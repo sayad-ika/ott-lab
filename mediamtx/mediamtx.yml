@@ -16,6 +16,10 @@ webrtcAddress: :8889
 webrtcLocalUDPAddress: :8189
 webrtcAllowOrigins: ["*"]
 
+# REST API (used by scripts/start-pipeline.ps1 to auto-detect incoming streams)
+api: yes
+apiAddress: :9997
+
 # Path Configuration
 # OBS pushes to: rtmp://localhost:1935/live/stream
 # FFmpeg reads from: rtmp://localhost:1935/live/stream
