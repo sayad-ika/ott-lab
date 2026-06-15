@@ -1,7 +1,8 @@
-import { STREAMS } from '../config/streams'
+import { useAllStreams } from '../hooks/useLiveStreams'
 import { OpsTile } from './OpsTile'
 
 export function OpsDashboard() {
+  const { streams } = useAllStreams()
   return (
     <div style={styles.page}>
       <div style={styles.header}>
@@ -9,7 +10,7 @@ export function OpsDashboard() {
         <p style={styles.subtitle}>Real-time stream health overview</p>
       </div>
       <div style={styles.grid}>
-        {STREAMS.map((s) => (
+        {streams.map((s) => (
           <OpsTile key={s.name} streamName={s.name} streamLabel={s.label} />
         ))}
       </div>
