@@ -110,7 +110,7 @@ export function Player() {
     const id = setInterval(() => {
       if (countdownEndAt.current > 0 && Date.now() >= countdownEndAt.current) {
         // Countdown just ended — force a manifest reload
-        hlsRef.current?.loadLevel(hlsRef.current.currentLevel)
+        hlsRef.current?.startLoad()
         countdownEndAt.current = 0
       }
     }, 500)
