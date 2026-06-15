@@ -83,7 +83,7 @@ The ad proxy (`scripts/ad-proxy.mjs`) is a Node.js HTTP server on port 8081 that
 - After ad completes: transitions back to live with a DISCONTINUITY boundary
 - All HLS requests route through the proxy via Nginx `proxy_pass`
 
-State machine per stream: `live` → `playing` (ad segments injected) → `transition_out` (DISCONTINUITY + live segments) → `live`
+State machine per stream: `live` → `countdown` (pre-roll countdown, live manifest served) → `playing` (ad segments injected) → `transition_out` (DISCONTINUITY + live segments) → `live`
 
 ### VOD Pipeline (Chapter 5)
 
@@ -199,10 +199,13 @@ npm run build        # Build for production (output to dist/)
 ### Ad Break Commands (Chapter 4)
 
 ```powershell
-# Start an ad break (uses prepared ad from ads/prepared/)
+# Start an ad break with default 8s countdown
 .\scripts\start-ad-break.cmd -Stream "stream" -Ad "MW4"
 
-# Cancel an active ad break
+# Start with custom countdown duration
+.\scripts\start-ad-break.cmd -Stream "stream" -Ad "MW4" -Countdown 10
+
+# Cancel an active ad break (works during countdown or playback)
 .\scripts\stop-ad-break.cmd -Stream "stream"
 
 # Check ad break status (JSON)
@@ -242,10 +245,11 @@ Invoke-RestMethod http://localhost:8081/ad-break/status
 - Nginx proxies all `/live/` requests through the ad proxy instead of serving files directly
 - Ad assets must be pre-packaged in `ads/prepared/<name>/` using `package-vod.ps1` or equivalent FFmpeg commands
 - The `ads/prepared/MW4/` ad is included as a demo (11 segments, ~60s total)
-- When an ad break starts, the proxy reads the live manifest, appends `#EXT-X-DISCONTINUITY` + ad segments
+- **Pre-roll countdown:** When triggered, the break enters a `countdown` state (default 8s) where the live manifest continues to be served. The player shows a "Commercial break starting in Ns" overlay. After the countdown, the state transitions to `playing` and ad segments are injected. This synchronizes the badge with actual ad playback.
+- When ad playback starts, the proxy reads the live manifest, appends `#EXT-X-DISCONTINUITY` + ad segments
 - After the ad duration elapses (+2s buffer), the proxy transitions back to live with another `#EXT-X-DISCONTINUITY`
-- The `transition_out` state lasts 12s (2 segment durations) to let HLS.js re-sync to the live edge
-- The player polls `/ad-break/status` every 2s and shows an "AD" badge during ad breaks
+- The `transition_out` state lasts 18s to let HLS.js re-sync to the live edge
+- The player polls `/ad-break/status` every 2s and shows different UI for countdown vs playing states
 - Ad segments are served from `ads/prepared/<name>/` via the `/ads/<name>/<file>.ts` route on the proxy
 - **Limitations:** Global ad breaks (all viewers see same ad), no SCTE-35, no per-viewer targeting, no impression tracking, late joiners may miss part of the ad, no DVR resume after ad ends
 

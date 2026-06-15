@@ -8,7 +8,7 @@
 //   GET  /live/<name>/stream.m3u8   -> proxied or ad-injected manifest
 //   GET  /live/<name>/<segment>.ts  -> proxied live segment
 //   GET  /ads/<ad>/<segment>.ts     -> ad segment files
-//   POST /ad-break/<stream>         -> start ad break  (body: {ad: "<name>"})
+//   POST /ad-break/<stream>         -> start ad break  (body: {ad: "<name>", countdown: 8})
 //   DELETE /ad-break/<stream>       -> cancel ad break
 //   GET  /ad-break/status           -> JSON status of all streams
 
@@ -27,17 +27,17 @@ const PORT = parseInt(process.env.AD_PROXY_PORT || '8081', 10)
 // ── Ad break state per stream ──
 const breaks = new Map()
 // breaks.get(name) = {
-//   state: 'live' | 'playing' | 'transition_out',
+//   state: 'countdown' | 'playing' | 'transition_out',
 //   ad: string,
 //   adSegments: [{file, duration}],
 //   adTotalDuration: number,
-//   adStartTime: number,          // Date.now() when ad break started
+//   countdownStartTime: number,   // Date.now() when countdown began
+//   countdownDuration: number,    // seconds before ad starts
+//   adStartTime: number,          // Date.now() when ad playback began (set after countdown)
 //   transitionOutTime: number,
 //   adWindowStartSeq: number,     // MEDIA-SEQUENCE for lastLiveSegments[0]
 //   frozenTargetDuration: number, // TARGETDURATION from live at break start
 //   lastLiveSegments: [{file, duration}],  // last 3 live segments at break start
-//   liveSegmentsAtBreakEnd: [{file, duration}],  // set when transitioning out
-//   liveSeqAtBreakEnd: number,    // set when transitioning out
 // }
 
 // ── Helpers ──
@@ -148,7 +148,7 @@ function getState(streamName) {
   return breaks.get(streamName)
 }
 
-function startAdBreak(streamName, adName) {
+function startAdBreak(streamName, adName, countdownSeconds = 8) {
   const adDir = path.join(ADS_DIR, adName)
   if (!fs.existsSync(path.join(adDir, 'playlist.m3u8'))) {
     return { error: `Ad '${adName}' not found in ${ADS_DIR}` }
@@ -170,12 +170,14 @@ function startAdBreak(streamName, adName) {
   const adWindowStartSeq = live.mediaSequence + Math.max(0, live.segments.length - retainedLiveSegments.length)
 
   const brk = {
-    state: 'playing',
+    state: 'countdown',
     streamName,
     ad: adName,
     adSegments: adParsed.segments,
     adTotalDuration,
-    adStartTime: Date.now(),
+    countdownStartTime: Date.now(),
+    countdownDuration: countdownSeconds,
+    adStartTime: 0,               // set when countdown expires
     transitionOutTime: 0,
     adWindowStartSeq,
     frozenTargetDuration: live.targetDuration,
@@ -183,7 +185,7 @@ function startAdBreak(streamName, adName) {
   }
 
   breaks.set(streamName, brk)
-  return { ok: true, stream: streamName, ad: adName, duration: adTotalDuration }
+  return { ok: true, stream: streamName, ad: adName, duration: adTotalDuration, countdown: countdownSeconds }
 }
 
 function cancelAdBreak(streamName) {
@@ -191,6 +193,11 @@ function cancelAdBreak(streamName) {
     return { error: `No active ad break for stream '${streamName}'` }
   }
   const brk = breaks.get(streamName)
+  // If still in countdown, just delete entirely (no ad segments were served)
+  if (brk.state === 'countdown') {
+    breaks.delete(streamName)
+    return { ok: true, stream: streamName, cancelled: 'countdown' }
+  }
   brk.state = 'transition_out'
   brk.transitionOutTime = Date.now()
   return { ok: true, stream: streamName }
@@ -200,6 +207,23 @@ function checkAdBreakExpiry(streamName) {
   const brk = breaks.get(streamName)
   if (!brk) return
 
+  // Countdown → playing (ad starts)
+  if (brk.state === 'countdown') {
+    const elapsed = (Date.now() - brk.countdownStartTime) / 1000
+    if (elapsed >= brk.countdownDuration) {
+      brk.state = 'playing'
+      brk.adStartTime = Date.now()  // ad playback clock starts NOW
+      // Refresh retained live segments so the ad manifest starts from the
+      // current live edge (not stale segments captured at countdown start).
+      const liveText = readLiveManifest(streamName)
+      if (liveText) {
+        const live = parseM3u8(liveText)
+        brk.lastLiveSegments = live.segments.slice(-3)
+      }
+    }
+  }
+
+  // Playing → transition_out (ad finished)
   if (brk.state === 'playing') {
     const elapsed = (Date.now() - brk.adStartTime) / 1000
     if (elapsed >= brk.adTotalDuration + 2) {
@@ -208,6 +232,7 @@ function checkAdBreakExpiry(streamName) {
     }
   }
 
+  // Transition_out → live (delete break entry)
   if (brk.state === 'transition_out') {
     const elapsed = (Date.now() - brk.transitionOutTime) / 1000
     // Stay long enough for HLS.js to fetch the DISCONTINUITY boundary
@@ -279,7 +304,8 @@ const server = http.createServer((req, res) => {
         let params = {}
         try { params = JSON.parse(body) } catch {}
         const adName = params.ad || 'MW4'
-        const result = startAdBreak(streamName, adName)
+        const countdown = params.countdown ?? 8
+        const result = startAdBreak(streamName, adName, countdown)
         sendJson(res, result.error ? 400 : 200, result)
       })
       return
@@ -296,13 +322,24 @@ const server = http.createServer((req, res) => {
   if (url.pathname === '/ad-break/status') {
     const status = {}
     for (const [name, brk] of breaks) {
-      const elapsed = (Date.now() - brk.adStartTime) / 1000
-      status[name] = {
-        state: brk.state,
-        ad: brk.ad,
-        elapsed: Math.round(elapsed * 10) / 10,
-        totalDuration: brk.adTotalDuration,
-        remaining: Math.max(0, Math.round((brk.adTotalDuration - elapsed) * 10) / 10),
+      if (brk.state === 'countdown') {
+        const countdownElapsed = (Date.now() - brk.countdownStartTime) / 1000
+        status[name] = {
+          state: 'countdown',
+          ad: brk.ad,
+          countdownRemaining: Math.max(0, Math.round((brk.countdownDuration - countdownElapsed) * 10) / 10),
+          countdownDuration: brk.countdownDuration,
+          totalDuration: brk.adTotalDuration,
+        }
+      } else {
+        const elapsed = (Date.now() - brk.adStartTime) / 1000
+        status[name] = {
+          state: brk.state,
+          ad: brk.ad,
+          elapsed: Math.round(elapsed * 10) / 10,
+          totalDuration: brk.adTotalDuration,
+          remaining: Math.max(0, Math.round((brk.adTotalDuration - elapsed) * 10) / 10),
+        }
       }
     }
     sendJson(res, 200, status)
@@ -348,7 +385,7 @@ const server = http.createServer((req, res) => {
         return
       }
 
-      // Normal live
+      // countdown or normal live — serve the live manifest unchanged
       sendM3u8(res, liveText)
       return
     }

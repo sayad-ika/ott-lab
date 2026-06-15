@@ -3,11 +3,13 @@ import { useParams } from 'react-router-dom'
 import Hls from 'hls.js'
 
 interface AdBreakStatus {
-  state: string
+  state: 'countdown' | 'playing' | 'transition_out' | 'live'
   ad: string
-  elapsed: number
+  elapsed?: number
   totalDuration: number
-  remaining: number
+  remaining?: number
+  countdownRemaining?: number
+  countdownDuration?: number
 }
 
 export function Player() {
@@ -17,6 +19,7 @@ export function Player() {
   const hlsRef = useRef<Hls | null>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   const controlsTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const countdownEndAt = useRef<number>(0)
 
   const [isPlaying, setIsPlaying] = useState(false)
   const [volume, setVolume] = useState(1)
@@ -24,6 +27,7 @@ export function Player() {
   const [isFullscreen, setIsFullscreen] = useState(false)
   const [showControls, setShowControls] = useState(true)
   const [adBreak, setAdBreak] = useState<AdBreakStatus | null>(null)
+  const [showCountdownOverlay, setShowCountdownOverlay] = useState(false)
 
   useEffect(() => {
     const video = videoRef.current
@@ -65,7 +69,17 @@ export function Player() {
         .then(r => r.json())
         .then(data => {
           const status = data[stream]
-          setAdBreak(status && status.state !== 'live' ? status : null)
+          if (status && status.state !== 'live') {
+            setAdBreak(status)
+            // Record when the countdown is about to end so the fast-poll
+            // effect can trigger an immediate HLS.js reload.
+            if (status.state === 'countdown' && status.countdownRemaining <= 1.0) {
+              countdownEndAt.current = Date.now()
+            }
+          } else {
+            setAdBreak(null)
+            countdownEndAt.current = 0
+          }
         })
         .catch(() => setAdBreak(null))
     }
@@ -73,6 +87,35 @@ export function Player() {
     const id = setInterval(poll, 2000)
     return () => clearInterval(id)
   }, [stream])
+
+  // Show countdown overlay during countdown AND for a few seconds after
+  // the countdown ends (while HLS.js loads the ad manifest and buffers).
+  useEffect(() => {
+    if (adBreak?.state === 'countdown') {
+      setShowCountdownOverlay(true)
+    } else if (adBreak?.state === 'playing' && (adBreak.elapsed ?? 0) < 3) {
+      // Keep overlay visible briefly after ad starts to cover
+      // the HLS.js manifest reload + buffer time
+      setShowCountdownOverlay(true)
+    } else {
+      setShowCountdownOverlay(false)
+    }
+  }, [adBreak])
+
+  // Fast-poll after countdown ends: force HLS.js to reload the manifest
+  // immediately so ad segments appear within ~500ms instead of waiting
+  // for the next scheduled refresh (3-6s).
+  useEffect(() => {
+    if (!adBreak || adBreak.state !== 'countdown') return
+    const id = setInterval(() => {
+      if (countdownEndAt.current > 0 && Date.now() >= countdownEndAt.current) {
+        // Countdown just ended — force a manifest reload
+        hlsRef.current?.loadLevel(hlsRef.current.currentLevel)
+        countdownEndAt.current = 0
+      }
+    }, 500)
+    return () => clearInterval(id)
+  }, [adBreak])
 
   const showControlsTemporarily = useCallback(() => {
     setShowControls(true)
@@ -158,6 +201,24 @@ export function Player() {
         </div>
       )}
 
+      {showCountdownOverlay && (
+        <div style={styles.countdownOverlay}>
+          <div style={styles.countdownContent}>
+            {adBreak?.state === 'countdown' ? (
+              <>
+                <div style={styles.countdownLabel}>Commercial break starting in</div>
+                <div style={styles.countdownTimer}>{Math.ceil(adBreak.countdownRemaining ?? 0)}</div>
+              </>
+            ) : (
+              <>
+                <div style={styles.countdownLabel}>Commercial break</div>
+                <div style={styles.countdownStarting}>Starting...</div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
       <div
         style={{
           ...styles.controls,
@@ -221,10 +282,14 @@ export function Player() {
               />
             </div>
 
-            <span style={adBreak ? styles.adBadge : styles.liveBadge}>
-              {adBreak ? (
+            <span style={adBreak ? (adBreak.state === 'countdown' ? styles.countdownBadge : styles.adBadge) : styles.liveBadge}>
+              {adBreak?.state === 'countdown' ? (
                 <>
-                  <span style={styles.adDot} /> AD ({Math.ceil(adBreak.remaining)}s)
+                  <span style={styles.countdownDot} /> BREAK IN {Math.ceil(adBreak.countdownRemaining ?? 0)}s
+                </>
+              ) : adBreak?.state === 'playing' ? (
+                <>
+                  <span style={styles.adDot} /> AD ({Math.ceil(adBreak.remaining ?? 0)}s)
                 </>
               ) : (
                 <>
@@ -364,6 +429,61 @@ const styles: Record<string, React.CSSProperties> = {
     borderRadius: '50%',
     backgroundColor: '#ffc107',
     animation: 'pulse 1s ease-in-out infinite',
+  },
+  countdownBadge: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '5px',
+    color: '#ffc107',
+    fontSize: '12px',
+    fontWeight: 600,
+    letterSpacing: '0.5px',
+    backgroundColor: 'rgba(255,193,7,0.15)',
+    padding: '2px 8px',
+    borderRadius: '4px',
+  },
+  countdownDot: {
+    width: '6px',
+    height: '6px',
+    borderRadius: '50%',
+    backgroundColor: '#ffc107',
+    animation: 'pulse 1.5s ease-in-out infinite',
+  },
+  countdownOverlay: {
+    position: 'absolute',
+    inset: 0,
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    background: 'rgba(0,0,0,0.55)',
+    zIndex: 5,
+    pointerEvents: 'none',
+  },
+  countdownContent: {
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center',
+    gap: '8px',
+  },
+  countdownLabel: {
+    color: '#ffffff',
+    fontSize: '16px',
+    fontWeight: 500,
+    letterSpacing: '0.5px',
+    textTransform: 'uppercase',
+  },
+  countdownTimer: {
+    color: '#ffc107',
+    fontSize: '64px',
+    fontWeight: 700,
+    lineHeight: 1,
+    textShadow: '0 2px 20px rgba(255,193,7,0.4)',
+  },
+  countdownStarting: {
+    color: '#ffc107',
+    fontSize: '32px',
+    fontWeight: 600,
+    animation: 'pulse 1.5s ease-in-out infinite',
   },
   volumeGroup: {
     display: 'flex',

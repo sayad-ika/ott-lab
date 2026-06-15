@@ -2,21 +2,24 @@
 #
 # Usage:
 #   .\scripts\start-ad-break.cmd -Stream "stream" -Ad "MW4"
+#   .\scripts\start-ad-break.cmd -Stream "stream" -Ad "MW4" -Countdown 10
 
 param(
     [Parameter(Mandatory)] [string] $Stream,
-    [string] $Ad = 'MW4'
+    [string] $Ad = 'MW4',
+    [int] $Countdown = 8
 )
 
 $proxyPort = 8081
 $url = "http://localhost:${proxyPort}/ad-break/${Stream}"
 
-$body = @{ ad = $Ad } | ConvertTo-Json
+$body = @{ ad = $Ad; countdown = $Countdown } | ConvertTo-Json
 
 try {
     $response = Invoke-RestMethod -Uri $url -Method Post -Body $body -ContentType 'application/json' -ErrorAction Stop
     if ($response.ok) {
-        Write-Host "Ad break started on '$Stream' with ad '$Ad' ($($response.duration)s)" -ForegroundColor Green
+        Write-Host "Ad break scheduled on '$Stream' with ad '$Ad'" -ForegroundColor Green
+        Write-Host "  Countdown: ${Countdown}s, Ad duration: $($response.duration)s" -ForegroundColor DarkGray
     } else {
         Write-Host "ERROR: $($response.error)" -ForegroundColor Red
         exit 1
