@@ -146,7 +146,7 @@ ffmpeg -i rtmp://localhost:1935/live/stream \
   -b:a 128k \
   -ar 44100 \
   -f hls \
-  -hls_time 6 \
+  -hls_time 2 \
   -hls_list_size 10 \
   -hls_flags delete_segments+append_list+temp_file \
   -hls_segment_filename "stream/segment_%03d.ts" \
@@ -156,8 +156,8 @@ ffmpeg -i rtmp://localhost:1935/live/stream \
 **Key FFmpeg Flags:**
 - `-preset veryfast` — fast encoding, minimal latency
 - `-tune zerolatency` — optimize for live streaming
-- `-hls_time 6` — 6-second segments
-- `-hls_list_size 10` — keep 10 segments in playlist (60s window)
+- `-hls_time 2` — 2-second segments
+- `-hls_list_size 10` — keep 10 segments in playlist (20s window)
 - `-hls_flags delete_segments` — remove old segments automatically
 - `-hls_flags append_list` — append to playlist (not overwrite)
 - `-hls_flags temp_file` — write to `.tmp` then rename (fixes Windows file locking)

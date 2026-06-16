@@ -1,8 +1,12 @@
-# package-vod.ps1 — Package a recording as VOD with optional pre-roll ad
+# package-vod.ps1 — Package a recording as VOD with optional ad (pre-roll or mid-roll)
 # Prepares the ad automatically if not already prepared.
+# Final output is a single directory with linear segments and one index.m3u8.
 #
-# Usage (with ad):
+# Usage (pre-roll ad — default):
 #   .\scripts\package-vod.ps1 -Stream "stream" -Recording "stream_2026-06-10_15-18-10.mkv" -AdName "promo15" -AdFile "ads\source\promo.mp4"
+#
+# Usage (mid-roll ad at 30 seconds):
+#   .\scripts\package-vod.ps1 -Stream "stream" -Recording "stream_2026-06-10_15-18-10.mkv" -AdName "promo15" -AdFile "ads\source\promo.mp4" -AdPosition 30
 #
 # Usage (without ad):
 #   .\scripts\package-vod.ps1 -Stream "stream" -Recording "stream_2026-06-10_15-18-10.mkv"
@@ -11,7 +15,8 @@ param(
     [Parameter(Mandatory)] [string] $Stream,
     [Parameter(Mandatory)] [string] $Recording,
     [string] $AdName,
-    [string] $AdFile
+    [string] $AdFile,
+    [int] $AdPosition = 0
 )
 
 $root = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
@@ -25,12 +30,37 @@ if (-not (Test-Path "$recordingsDir\$Recording")) {
     exit 1
 }
 
+# ── Helper: parse an HLS playlist into segment objects ──
+function Parse-HlsPlaylist($playlistPath) {
+    $segments = @()
+    $duration = 0.0
+    foreach ($line in (Get-Content $playlistPath)) {
+        if ($line -match '^#EXTINF:([\d.]+)') {
+            $duration = [double]$matches[1]
+        }
+        elseif ($line -match '^segment_\d+\.ts$') {
+            $segments += @{ file = $line; duration = $duration }
+        }
+    }
+    return $segments
+}
+
+# ── Helper: copy segments from a parsed playlist into the output dir with sequential naming ──
+function Copy-Segments($segments, $sourceDir, $outDir, $startIndex) {
+    $i = $startIndex
+    foreach ($seg in $segments) {
+        $destName = "segment_{0:D3}.ts" -f $i
+        Copy-Item "$sourceDir\$($seg.file)" "$outDir\$destName" -Force
+        $i++
+    }
+    return $i
+}
+
 # ── Prepare ad if needed ──
 if ($AdName) {
     $adDir = "$root\ads\prepared\$AdName"
 
     if ($AdFile) {
-        # Ad source provided — prepare if not already done
         if (-not (Test-Path $AdFile)) {
             Write-Host "ERROR: Ad file not found: $AdFile" -ForegroundColor Red
             exit 1
@@ -48,7 +78,7 @@ if ($AdName) {
               -c:v libx264 -preset veryfast -tune zerolatency `
               -b:v 3500k -maxrate 4000k -bufsize 6000k `
               -c:a aac -b:a 128k -ar 44100 -ac 2 `
-              -f hls -hls_time 6 -hls_list_size 0 `
+              -f hls -hls_time 2 -hls_list_size 0 `
               -hls_segment_filename "$adDir\segment_%03d.ts" `
               "$adDir\playlist.m3u8"
 
@@ -60,7 +90,6 @@ if ($AdName) {
             Write-Host "Ad prepared: $adDir" -ForegroundColor Green
         }
     } else {
-        # No ad source — must already be prepared
         if (-not (Test-Path "$adDir\playlist.m3u8")) {
             Write-Host "ERROR: Ad '$AdName' not prepared and no -AdFile provided." -ForegroundColor Red
             Write-Host "  Run with: -AdFile `"ads\source\<file>.mp4`"" -ForegroundColor Yellow
@@ -71,79 +100,151 @@ if ($AdName) {
     $adDir = "$root\ads\prepared\$AdName"
 }
 
-# ── Create output directories ──
-if (-not (Test-Path $outDir)) { New-Item -ItemType Directory -Path $outDir | Out-Null }
-if (-not (Test-Path "$outDir\recording")) { New-Item -ItemType Directory -Path "$outDir\recording" | Out-Null }
-
-# ── Step 1: Copy ad segments (if any) ──
+# ── Determine ad placement mode ──
+$midRoll = ($AdName -and $AdPosition -gt 0)
 $hasAd = $false
+
+# ── Step 1: Transcode to temp directories ──
+$tmpDir = "$outDir\.tmp"
+if (Test-Path $tmpDir) { Remove-Item $tmpDir -Recurse -Force }
+New-Item -ItemType Directory -Path $tmpDir | Out-Null
+if (-not (Test-Path $outDir)) { New-Item -ItemType Directory -Path $outDir | Out-Null }
+
+if ($midRoll) {
+    Write-Host "Transcoding recording (mid-roll at ${AdPosition}s)..." -ForegroundColor Yellow
+
+    $preDir = "$tmpDir\pre"
+    $postDir = "$tmpDir\post"
+    New-Item -ItemType Directory -Path $preDir | Out-Null
+    New-Item -ItemType Directory -Path $postDir | Out-Null
+
+    # Pre-ad portion
+    Write-Host "  Transcoding pre-ad (0s to ${AdPosition}s)..." -ForegroundColor Yellow
+    ffmpeg -i "$recordingsDir\$Recording" `
+      -ss 0 -t $AdPosition `
+      -c:v copy -c:a aac -b:a 128k -ar 44100 -ac 2 `
+      -f hls -hls_time 2 -hls_list_size 0 `
+      -hls_segment_filename "$preDir\segment_%03d.ts" `
+      "$preDir\playlist.m3u8"
+
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "ERROR: Pre-ad transcoding failed" -ForegroundColor Red
+        exit 1
+    }
+
+    # Post-ad portion
+    Write-Host "  Transcoding post-ad (${AdPosition}s to end)..." -ForegroundColor Yellow
+    ffmpeg -i "$recordingsDir\$Recording" `
+      -ss $AdPosition `
+      -c:v copy -c:a aac -b:a 128k -ar 44100 -ac 2 `
+      -f hls -hls_time 2 -hls_list_size 0 `
+      -hls_segment_filename "$postDir\segment_%03d.ts" `
+      "$postDir\playlist.m3u8"
+
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "ERROR: Post-ad transcoding failed" -ForegroundColor Red
+        exit 1
+    }
+
+    Write-Host "Recording transcoded (pre + post)" -ForegroundColor Green
+} else {
+    # Pre-roll or no ad: single pass into temp dir
+    $recDir = "$tmpDir\recording"
+    New-Item -ItemType Directory -Path $recDir | Out-Null
+
+    Write-Host "Transcoding recording to HLS (copy video, transcode audio)..." -ForegroundColor Yellow
+
+    ffmpeg -i "$recordingsDir\$Recording" `
+      -c:v copy -c:a aac -b:a 128k -ar 44100 -ac 2 `
+      -f hls -hls_time 2 -hls_list_size 0 `
+      -hls_segment_filename "$recDir\segment_%03d.ts" `
+      "$recDir\playlist.m3u8"
+
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "ERROR: Recording transcoding failed" -ForegroundColor Red
+        exit 1
+    }
+}
+
+# ── Step 2: Copy ad segments to temp ──
+$adTmpDir = $null
 if ($AdName) {
     $adSrc = "$root\ads\prepared\$AdName"
     if (Test-Path "$adSrc\playlist.m3u8") {
         $hasAd = $true
-        if (-not (Test-Path "$outDir\ad")) { New-Item -ItemType Directory -Path "$outDir\ad" | Out-Null }
-        Copy-Item "$adSrc\segment_*.ts" "$outDir\ad\" -Force
-        Copy-Item "$adSrc\playlist.m3u8" "$outDir\ad\playlist.m3u8" -Force
-        Write-Host "Copied ad segments to $outDir\ad" -ForegroundColor Yellow
+        $adTmpDir = "$tmpDir\ad"
+        New-Item -ItemType Directory -Path $adTmpDir | Out-Null
+        Copy-Item "$adSrc\segment_*.ts" "$adTmpDir\" -Force
+        Copy-Item "$adSrc\playlist.m3u8" "$adTmpDir\playlist.m3u8" -Force
+        Write-Host "Copied ad segments" -ForegroundColor Yellow
     }
 }
 
-# ── Step 2: Transcode recording to HLS ──
-Write-Host "Transcoding recording to HLS (copy video, transcode audio)..." -ForegroundColor Yellow
+# ── Step 3: Assemble linear segments into output dir ──
+Write-Host "Assembling final playlist..." -ForegroundColor Yellow
 
-ffmpeg -i "$recordingsDir\$Recording" `
-  -c:v copy -c:a aac -b:a 128k -ar 44100 -ac 2 `
-  -f hls -hls_time 6 -hls_list_size 0 `
-  -hls_segment_filename "$outDir\recording\segment_%03d.ts" `
-  "$outDir\recording\playlist.m3u8"
-
-if ($LASTEXITCODE -ne 0) {
-    Write-Host "ERROR: Recording transcoding failed" -ForegroundColor Red
-    exit 1
-}
-
-# ── Step 3: Build combined playlist ──
 $playlistLines = @()
 $playlistLines += "#EXTM3U"
 $playlistLines += "#EXT-X-VERSION:3"
-$playlistLines += "#EXT-X-TARGETDURATION:6"
+$playlistLines += "#EXT-X-TARGETDURATION:2"
 $playlistLines += "#EXT-X-MEDIA-SEQUENCE:0"
+$segIndex = 0
 
-if ($hasAd) {
-    # Parse ad playlist for segment info
-    $adPlaylist = Get-Content "$outDir\ad\playlist.m3u8"
-    $adSegments = @()
-    $adDuration = 0.0
-
-    foreach ($line in $adPlaylist) {
-        if ($line -match '^#EXTINF:([\d.]+)') {
-            $adDuration = [double]$matches[1]
-        }
-        elseif ($line -match '^segment_\d+\.ts$') {
-            $adSegments += @{ file = "ad/$line"; duration = $adDuration }
-        }
-    }
-
-    # Add ad segments
-    foreach ($seg in $adSegments) {
+if ($midRoll) {
+    # Pre-ad recording segments
+    $prePlaylist = Parse-HlsPlaylist "$tmpDir\pre\playlist.m3u8"
+    foreach ($seg in $prePlaylist) {
+        $destName = "segment_{0:D3}.ts" -f $segIndex
+        Copy-Item "$tmpDir\pre\$($seg.file)" "$outDir\$destName" -Force
         $playlistLines += "#EXTINF:$($seg.duration),"
-        $playlistLines += $seg.file
+        $playlistLines += $destName
+        $segIndex++
     }
 
+    # Ad segments
+    if ($hasAd) {
+        $playlistLines += "#EXT-X-DISCONTINUITY"
+        $adPlaylist = Parse-HlsPlaylist "$adTmpDir\playlist.m3u8"
+        foreach ($seg in $adPlaylist) {
+            $destName = "segment_{0:D3}.ts" -f $segIndex
+            Copy-Item "$adTmpDir\$($seg.file)" "$outDir\$destName" -Force
+            $playlistLines += "#EXTINF:$($seg.duration),"
+            $playlistLines += $destName
+            $segIndex++
+        }
+    }
+
+    # Post-ad recording segments
     $playlistLines += "#EXT-X-DISCONTINUITY"
-}
-
-# Parse recording playlist for segment info
-$recPlaylist = Get-Content "$outDir\recording\playlist.m3u8"
-$recDuration = 0.0
-
-foreach ($line in $recPlaylist) {
-    if ($line -match '^#EXTINF:([\d.]+)') {
-        $recDuration = [double]$matches[1]
+    $postPlaylist = Parse-HlsPlaylist "$tmpDir\post\playlist.m3u8"
+    foreach ($seg in $postPlaylist) {
+        $destName = "segment_{0:D3}.ts" -f $segIndex
+        Copy-Item "$tmpDir\post\$($seg.file)" "$outDir\$destName" -Force
+        $playlistLines += "#EXTINF:$($seg.duration),"
+        $playlistLines += $destName
+        $segIndex++
     }
-    elseif ($line -match '^segment_\d+\.ts$') {
-        $playlistLines += "#EXTINF:$($recDuration),"
-        $playlistLines += "recording/$line"
+} else {
+    # Pre-roll or no ad
+    if ($hasAd) {
+        $adPlaylist = Parse-HlsPlaylist "$adTmpDir\playlist.m3u8"
+        foreach ($seg in $adPlaylist) {
+            $destName = "segment_{0:D3}.ts" -f $segIndex
+            Copy-Item "$adTmpDir\$($seg.file)" "$outDir\$destName" -Force
+            $playlistLines += "#EXTINF:$($seg.duration),"
+            $playlistLines += $destName
+            $segIndex++
+        }
+        $playlistLines += "#EXT-X-DISCONTINUITY"
+    }
+
+    $recPlaylist = Parse-HlsPlaylist "$tmpDir\recording\playlist.m3u8"
+    foreach ($seg in $recPlaylist) {
+        $destName = "segment_{0:D3}.ts" -f $segIndex
+        Copy-Item "$tmpDir\recording\$($seg.file)" "$outDir\$destName" -Force
+        $playlistLines += "#EXTINF:$($seg.duration),"
+        $playlistLines += $destName
+        $segIndex++
     }
 }
 
@@ -151,17 +252,18 @@ $playlistLines += "#EXT-X-ENDLIST"
 
 [System.IO.File]::WriteAllLines("$outDir\index.m3u8", $playlistLines)
 
-# ── Step 4: Update manifest.json ──
+# ── Step 4: Clean up temp directory ──
+Remove-Item $tmpDir -Recurse -Force
+
+# ── Step 5: Update manifest.json ──
 Write-Host "Updating VOD manifest..." -ForegroundColor Yellow
 
 $manifestPath = "$root\vod\manifest.json"
 $manifest = @()
 
-# Load existing manifest if present
 if (Test-Path $manifestPath) {
     try {
         $existing = Get-Content $manifestPath -Raw | ConvertFrom-Json
-        # Rebuild as array (ConvertFrom-Json returns $null, single object, or array)
         if ($null -ne $existing) {
             $manifest = @($existing)
         }
@@ -170,26 +272,20 @@ if (Test-Path $manifestPath) {
     }
 }
 
-# Remove any entry with the same id (re-package scenario)
 $manifest = @($manifest | Where-Object { $_.id -ne $outName })
 
-# Derive stream name and recorded date from the directory name
-# Format: <stream>_<date>_<time>  e.g. stream_2026-06-10_15-18-10
 $parts = $outName -split '_', 2
 $derivedStream = if ($parts.Count -ge 1) { $parts[0] } else { 'unknown' }
 
-# Parse ISO date from the directory name (after first _)
 $derivedRecordedAt = ''
 if ($parts.Count -ge 2) {
     $dateTimeStr = $parts[1] -replace '_', '-'
-    # dateTimeStr is like "2026-06-10-15-18-10" -> "2026-06-10T15:18:10"
     $dateComponents = $dateTimeStr -split '-'
     if ($dateComponents.Count -ge 6) {
         $derivedRecordedAt = "$($dateComponents[0])-$($dateComponents[1])-$($dateComponents[2])T$($dateComponents[3]):$($dateComponents[4]):$($dateComponents[5])"
     }
 }
 
-# Build human-readable label
 $labelStream = $derivedStream
 $labelDate = ''
 if ($derivedRecordedAt) {
@@ -211,13 +307,17 @@ $newEntry = @{
 }
 
 $manifest += $newEntry
-
-# Write manifest
 $manifest | ConvertTo-Json -Depth 3 | Set-Content -Path $manifestPath -Encoding UTF8
 
 Write-Host "Manifest updated: $manifestPath" -ForegroundColor Green
 
 Write-Host ""
 Write-Host "VOD packaged: $outDir" -ForegroundColor Green
+Write-Host "  Segments: $segIndex segments" -ForegroundColor Green
 Write-Host "  Playlist: $outDir\index.m3u8" -ForegroundColor Green
+if ($midRoll) {
+    Write-Host "  Ad position: ${AdPosition}s (mid-roll)" -ForegroundColor Cyan
+} elseif ($hasAd) {
+    Write-Host "  Ad position: start (pre-roll)" -ForegroundColor Cyan
+}
 Write-Host "  Play at:  http://localhost:8080/vod/$outName/index.m3u8" -ForegroundColor Cyan

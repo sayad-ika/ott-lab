@@ -15,7 +15,7 @@ ott-lab/
 │   ├── start.ps1                  # Full pipeline launcher
 │   ├── stop.cmd                   # One-command pipeline shutdown
 │   ├── stop.ps1                   # Full pipeline teardown
-│   ├── package-vod.cmd            # Package recording as VOD with pre-roll (Chapter 5)
+│   ├── package-vod.cmd            # Package recording as VOD with ad insertion (Chapter 5)
 │   ├── package-vod.ps1            # (backend for package-vod.cmd)
 │   └── start-nginx.cmd            # Start nginx server
 ├── mediamtx/                      # RTMP ingest + WebRTC server config
@@ -67,10 +67,20 @@ N input streams, each with three outputs:
 Recording MKV ──► package-vod.ps1 ──┬──► ads/prepared/<name>/ (auto-prepares ad if needed)
  Ad MP4 ────────────────────────────┘           │
                                                 ▼
-                                        vod/<name>/
-                                        ├── ad/*.ts
-                                        ├── recording/*.ts
-                                        └── index.m3u8 (combined with EXT-X-DISCONTINUITY)
+                        ┌───────────────────────┴───────────────────────┐
+                        │ Pre-roll (default)       Mid-roll (-AdPosition) │
+                        │                                               │
+                        │ vod/<name>/                vod/<name>/         │
+                        │ ├── segment_000.ts         ├── segment_000.ts  │
+                        │ ├── segment_001.ts         ├── ...             │
+                        │ ├── ...                    └── index.m3u8      │
+                        │ └── index.m3u8                                │
+                        │                                               │
+                        │ Single flat directory, linear segments.       │
+                        │ index.m3u8 layout:                            │
+                        │ Pre-roll: [ad] → DISC → [recording]           │
+                        │ Mid-roll: [rec] → DISC → [ad] → DISC → [rec] │
+                        └───────────────────────────────────────────────┘
                                                 │
                                         vod/manifest.json (auto-updated by package-vod.ps1)
                                                 │
@@ -88,7 +98,7 @@ Stream names are configured in `player/src/config/streams.ts` and `scripts/start
 - **RTMP Ingest:** MediaMTX on port 1935
 - **WebRTC Signaling:** MediaMTX WHEP on port 8889 (TCP)
 - **WebRTC Media:** MediaMTX ICE/DTLS on port 8189 (UDP)
-- **Encoder:** FFmpeg (H.264/AAC, 720p30, HLS 6s segments)
+- **Encoder:** FFmpeg (H.264/AAC, 720p30, HLS 2s segments)
 - **HTTP Server:** Nginx on port 8080
 - **Player:** React + TypeScript + Vite on port 5173
 
@@ -164,6 +174,9 @@ npm run build        # Build for production (output to dist/)
 # Package a recording with pre-roll ad (auto-prepares ad if not already done)
 .\scripts\package-vod.cmd -Stream "stream" -Recording "stream_2026-06-10_15-18-10.mkv" -AdName "promo15" -AdFile "ads\source\promo.mp4"
 
+# Package a recording with mid-roll ad (ad plays after 30 seconds)
+.\scripts\package-vod.cmd -Stream "stream" -Recording "stream_2026-06-10_15-18-10.mkv" -AdName "promo15" -AdFile "ads\source\promo.mp4" -AdPosition 30
+
 # Package a recording with already-prepared ad (no -AdFile needed)
 .\scripts\package-vod.cmd -Stream "stream" -Recording "stream_2026-06-10_15-18-10.mkv" -AdName "promo15"
 
@@ -194,6 +207,8 @@ npm run build        # Build for production (output to dist/)
 - **PowerShell encoding:** `.ps1` scripts must use ASCII-safe strings only — no em-dash (`—`), curly quotes, or other Unicode punctuation. PowerShell 5.1 will fail to parse these characters.
 - `package-vod.ps1` auto-prepares ads (1920x1080, 60fps, H.264, AAC) when `-AdFile` is provided, skips if already prepared
 - `package-vod.ps1` uses `-c:v copy` for recordings (already H.264) and `-c:a aac` for audio (Vorbis→AAC)
+- `package-vod.ps1` supports mid-roll ad insertion via `-AdPosition <seconds>` — splits recording into pre/post segments, inserts ad at the specified time. Default is 0 (pre-roll). The ad position snaps to the nearest HLS segment boundary (~2s)
+- `package-vod.ps1` outputs a flat directory with linear `segment_000.ts` ... `segment_NNN.ts` and one `index.m3u8` — uses temp `.tmp/` dir during assembly, cleaned up after
 - `package-vod.ps1` auto-updates `vod/manifest.json` after each packaging run — the player fetches this at runtime via `useVodRecordings()` hook
 - `player/src/config/vod.ts` is the fallback manifest (hardcoded) — only used if `manifest.json` fetch fails
 - When adding VOD support for a new recording, run `package-vod.cmd` — no manual edits needed

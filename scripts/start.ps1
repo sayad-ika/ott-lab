@@ -53,7 +53,7 @@ foreach ($s in $streams) {
     $playlist = "$outDir\stream.m3u8"
 
     Write-Host "      Starting FFmpeg for '$($s.Name)' ($($s.Label))..." -ForegroundColor DarkGray
-    $ffmpegCmd = "ffmpeg -i $rtmpUrl -c:v libx264 -preset veryfast -tune zerolatency -b:v 3500k -maxrate 4000k -bufsize 6000k -c:a aac -b:a 128k -ar 44100 -f hls -hls_time 6 -hls_list_size 10 -hls_flags delete_segments+append_list -hls_segment_filename '$segmentPattern' '$playlist' -f matroska '$recordingFile'"
+    $ffmpegCmd = "ffmpeg -i $rtmpUrl -c:v libx264 -preset ultrafast -tune zerolatency -b:v 3500k -maxrate 4000k -bufsize 6000k -c:a aac -b:a 128k -ar 44100 -f hls -hls_time 2 -hls_list_size 10 -hls_flags delete_segments+append_list -hls_segment_filename '$segmentPattern' '$playlist' -f matroska '$recordingFile'"
     Start-Process powershell -ArgumentList "-NoExit", "-Command", $ffmpegCmd
 }
 
