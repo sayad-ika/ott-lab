@@ -7,6 +7,7 @@ export default defineConfig({
     proxy: {
       '/live': 'http://localhost:8080',
       '/vod': 'http://localhost:8080',
+      '/ads': 'http://localhost:8080',
     },
   },
 })

@@ -25,6 +25,6 @@ ffmpeg -i rtmp://localhost:1935/live/stream \
   -f hls \
   -hls_time 2 \
   -hls_list_size 10 \
-  -hls_flags delete_segments+append_list \
+  -hls_flags delete_segments+append_list+program_date_time \
   -hls_segment_filename "${STREAM_DIR}/segment_%03d.ts" \
   "${STREAM_DIR}/stream.m3u8"

@@ -2,6 +2,59 @@ import { useEffect, useRef, useState, useCallback } from 'react'
 import { useParams } from 'react-router-dom'
 import Hls from 'hls.js'
 
+interface AdSchedule {
+  adStart: string
+  duration: number
+  assetUri: string
+  label?: string
+}
+
+// Inject an HLS interstitial tag into the live manifest so HLS.js plays the
+// scheduled ad in-place, then returns to live. Idempotent and time-boxed: it
+// only injects while the ad window is still relevant (not long after it played).
+function injectAd(text: string, s: AdSchedule | null): string {
+  if (!s || text.includes('ID="ad-1"')) return text
+  const startMs = Date.parse(s.adStart)
+  if (Number.isNaN(startMs) || Date.now() > startMs + s.duration * 1000 + 60000) return text
+  const tag =
+    '#EXT-X-DATERANGE:ID="ad-1",CLASS="com.apple.hls.interstitial",' +
+    `START-DATE="${s.adStart}",DURATION=${s.duration},X-ASSET-URI="${s.assetUri}"`
+  // ponytail: temp debug log - confirms the tag is injected on each playlist
+  // load. Remove once ad playback is verified.
+  console.log('[interstitial] injecting tag for', s.adStart)
+  return text.replace(/^(#EXTM3U\r?\n)/, `$1${tag}\n`)
+}
+
+// Custom playlist loader: rewrites ONLY the /live/ manifest response to append
+// the interstitial tag. The ad asset's own playlist (served from /ads/) is left
+// untouched so we don't recurse into it.
+function createAdPLoader(getSchedule: () => AdSchedule | null) {
+  return class AdPLoader extends Hls.DefaultConfig.loader {
+    constructor(config: any) {
+      super(config)
+      const load = this.load.bind(this)
+      this.load = (context: any, config: any, callbacks: any) => {
+        const url = String(context?.url ?? '')
+        console.log('[ad] pLoader.load type=' + context?.type + ' url=' + url)
+        // Inject on BOTH the initial manifest and live playlist reloads. A live
+        // stream reloads as type 'level' every few seconds; injecting only on
+        // 'manifest' lets the tag vanish on reload, and HLS.js then drops the
+        // interstitial from the schedule - so the ad never fires.
+        if ((context?.type === 'manifest' || context?.type === 'level') && url.includes('/live/')) {
+          const orig = callbacks.onSuccess
+          callbacks.onSuccess = (response: any, stats: any) => {
+            if (typeof response.data === 'string') {
+              response.data = injectAd(response.data, getSchedule())
+            }
+            orig(response, stats, context)
+          }
+        }
+        load(context, config, callbacks)
+      }
+    }
+  }
+}
+
 export function Player() {
   const { stream = 'stream' } = useParams<{ stream: string }>()
   const hlsUrl = `/live/${stream}/stream.m3u8`
@@ -15,26 +68,72 @@ export function Player() {
   const [isMuted, setIsMuted] = useState(false)
   const [isFullscreen, setIsFullscreen] = useState(false)
   const [showControls, setShowControls] = useState(true)
+  const [inAd, setInAd] = useState(false)
+  const scheduleRef = useRef<AdSchedule | null>(null)
 
   useEffect(() => {
     const video = videoRef.current
     if (!video) return
 
-    if (video.canPlayType('application/vnd.apple.mpegurl')) {
-      video.src = hlsUrl
-      video.play()
-    } else if (Hls.isSupported()) {
-      const hls = new Hls({
+    let hls: Hls | null = null
+    let badgeTimer: ReturnType<typeof setInterval> | null = null
+
+    async function init() {
+      // Best-effort: read the ad schedule written by start.ps1. Missing or
+      // unreadable => no ad, plain live playback.
+      scheduleRef.current = null
+      try {
+        const res = await fetch(`/live/${stream}/ads.json`)
+        console.log('[ad] fetch /live/' + stream + '/ads.json -> HTTP', res.status)
+        if (res.ok) scheduleRef.current = (await res.json()) as AdSchedule
+      } catch {
+        scheduleRef.current = null
+      }
+      console.log('[ad] schedule =', scheduleRef.current)
+
+      // Re-narrow after the await above (TS drops the earlier null-check across it).
+      if (!video) return
+
+      // Prefer HLS.js whenever MSE is supported, even if the browser also has
+      // native HLS (e.g. desktop Safari): we need the custom pLoader to inject
+      // the interstitial tag, and native HLS can't be rewritten client-side.
+      // Native HLS is only the fallback for browsers without MSE (e.g. iOS).
+      if (!Hls.isSupported()) {
+        if (video.canPlayType('application/vnd.apple.mpegurl')) {
+          console.log('[ad] native HLS fallback (no MSE) - no interstitial injection')
+          video.src = hlsUrl
+          video.play()
+        }
+        return
+      }
+
+      const AdPLoader = createAdPLoader(() => scheduleRef.current)
+      hls = new Hls({
         liveSyncDurationCount: 3,
         liveMaxLatencyDurationCount: 6,
-      })
+        pLoader: AdPLoader,
+        interstitialAppendInPlace: true,
+        interstitialLiveLookAhead: 30,
+      } as any)
       hls.loadSource(hlsUrl)
       hls.attachMedia(video)
       hlsRef.current = hls
       hls.on(Hls.Events.MANIFEST_PARSED, () => {
         video.play()
       })
+
+      // Best-effort "ADVERTISEMENT" indicator from the interstitials manager.
+      badgeTimer = setInterval(() => {
+        try {
+          const mgr = (hls as any)?.interstitialsManager
+          setInAd(!!mgr?.interstitialPlayer)
+        } catch {
+          /* ignore */
+        }
+      }, 500)
     }
+
+    init()
 
     const onPlay = () => setIsPlaying(true)
     const onPause = () => setIsPlaying(false)
@@ -45,9 +144,11 @@ export function Player() {
     return () => {
       video.removeEventListener('play', onPlay)
       video.removeEventListener('pause', onPause)
-      hlsRef.current?.destroy()
+      if (badgeTimer) clearInterval(badgeTimer)
+      if (hls) hls.destroy()
+      hlsRef.current = null
     }
-  }, [hlsUrl])
+  }, [hlsUrl, stream])
 
   const showControlsTemporarily = useCallback(() => {
     setShowControls(true)
@@ -196,9 +297,13 @@ export function Player() {
               />
             </div>
 
-            <span style={styles.liveBadge}>
-              <span style={styles.liveDot} /> LIVE
-            </span>
+            {inAd ? (
+              <span style={styles.adBadge}>ADVERTISEMENT</span>
+            ) : (
+              <span style={styles.liveBadge}>
+                <span style={styles.liveDot} /> LIVE
+              </span>
+            )}
           </div>
 
           <div style={styles.rightButtons}>
@@ -312,6 +417,15 @@ const styles: Record<string, React.CSSProperties> = {
     height: '6px',
     borderRadius: '50%',
     backgroundColor: '#e50914',
+  },
+  adBadge: {
+    color: '#ffb400',
+    fontSize: '12px',
+    fontWeight: 700,
+    letterSpacing: '0.5px',
+    backgroundColor: 'rgba(0,0,0,0.55)',
+    padding: '2px 8px',
+    borderRadius: '4px',
   },
   volumeGroup: {
     display: 'flex',

@@ -9,6 +9,30 @@ $streams = @(
 )
 # -----------------------------------------------------------------------------
 
+# --- Ad schedule (Option B: client-side interstitials) -----------------------
+# The ad plays this many seconds after pipeline launch. AdName must match a
+# prepared ad under ads\prepared\<AdName>. Leave AdName empty to skip ads.
+$adSchedule = @{ AdName = 'MW4'; StartOffsetSec = 120 }
+# -----------------------------------------------------------------------------
+
+# Sum the #EXTINF durations in an HLS playlist so ads.json carries the real ad
+# length (falls back to 120s if the playlist is missing or unreadable).
+function Get-AdDuration {
+    param([string]$PlaylistPath)
+    $fallback = 120
+    if (-not (Test-Path $PlaylistPath)) { return $fallback }
+    try {
+        $total = 0.0
+        foreach ($line in Get-Content -Path $PlaylistPath) {
+            if ($line -match '^#EXTINF:([0-9.]+)') { $total += [double]$Matches[1] }
+        }
+        if ($total -le 0) { return $fallback }
+        return [math]::Round($total, 3)
+    } catch {
+        return $fallback
+    }
+}
+
 Write-Host "Starting OTT pipeline ($($streams.Count) streams)..." -ForegroundColor Cyan
 
 # Open firewall for LAN access
@@ -53,8 +77,19 @@ foreach ($s in $streams) {
     $playlist = "$outDir\stream.m3u8"
 
     Write-Host "      Starting FFmpeg for '$($s.Name)' ($($s.Label))..." -ForegroundColor DarkGray
-    $ffmpegCmd = "ffmpeg -i $rtmpUrl -c:v libx264 -preset ultrafast -tune zerolatency -b:v 3500k -maxrate 4000k -bufsize 6000k -c:a aac -b:a 128k -ar 44100 -f hls -hls_time 2 -hls_list_size 10 -hls_flags delete_segments+append_list -hls_segment_filename '$segmentPattern' '$playlist' -f matroska '$recordingFile'"
+    $ffmpegCmd = "ffmpeg -i $rtmpUrl -c:v libx264 -preset ultrafast -tune zerolatency -b:v 3500k -maxrate 4000k -bufsize 6000k -c:a aac -b:a 128k -ar 44100 -f hls -hls_time 2 -hls_list_size 10 -hls_flags delete_segments+append_list+program_date_time -hls_segment_filename '$segmentPattern' '$playlist' -f matroska '$recordingFile'"
     Start-Process powershell -ArgumentList "-NoExit", "-Command", $ffmpegCmd
+
+    # Write the ad schedule consumed by the player (Option B). Served at
+    # /live/<name>/ads.json via the existing /live/ alias.
+    if ($adSchedule.AdName) {
+        $adStart = (Get-Date).ToUniversalTime().AddSeconds($adSchedule.StartOffsetSec).ToString('yyyy-MM-ddTHH:mm:ss.fffZ')
+        $assetUri = "/ads/$($adSchedule.AdName)/playlist.m3u8"
+        $adDur = Get-AdDuration -PlaylistPath "$root\ads\prepared\$($adSchedule.AdName)\playlist.m3u8"
+        $adJson = @{ adStart = $adStart; duration = $adDur; assetUri = $assetUri; label = $adSchedule.AdName } | ConvertTo-Json -Compress
+        [System.IO.File]::WriteAllText("$outDir\ads.json", $adJson)
+        Write-Host "      Ad scheduled: $($adSchedule.AdName) at $adStart ($adDur s) -> $assetUri" -ForegroundColor DarkGray
+    }
 }
 
 Write-Host "  Waiting 8s for HLS segments..." -ForegroundColor DarkGray
